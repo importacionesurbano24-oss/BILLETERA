@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "Wallet": {
+      "title": "Wallet",
+      "description": "User's monthly budget wallet document",
+      "type": "object",
+      "properties": {
+        "budget": {
+          "type": "integer",
+          "description": "Monthly budget in local currency"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Wallet creation timestamp"
+        }
+      },
+      "required": ["budget", "createdAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Individual income or expense transaction",
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief note about the expense"
+        },
+        "amount": {
+          "type": "integer",
+          "description": "Value of the transaction"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["comida", "transporte", "compras", "servicios", "entretenimiento", "otros"],
+          "description": "Transaction category"
+        },
+        "day": {
+          "type": "integer",
+          "description": "Day of the month"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp"
+        }
+      },
+      "required": ["walletId", "description", "amount", "category", "day", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/wallets/{walletId}": {
+      "schema": "Wallet",
+      "description": "Contains user wallets"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Contains all expenses and transactions for users"
+    }
+  }
+}

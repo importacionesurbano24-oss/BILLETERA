@@ -1,0 +1,6 @@
+{
+  "name": "Tu Billetera",
+  "description": "A polished mobile dashboard for personal finance tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
