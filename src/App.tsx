@@ -988,32 +988,32 @@ export default function App() {
     <div className="min-h-screen bg-[#EFEFF3] dark:bg-[#090D16] text-gray-800 dark:text-gray-100 font-sans flex flex-col antialiased transition-colors duration-200">
       
       {/* GLOBAL TOP HEADER */}
-      <header className="w-full bg-white dark:bg-[#111827] border-b border-gray-200/80 dark:border-slate-800 px-4 md:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4 z-40 shadow-sm shrink-0 transition-colors">
-        <div className="flex items-center gap-5 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="bg-[#156045] dark:bg-[#1b7a58] p-2.5 rounded-2xl text-white shadow-md shadow-[#156045]/20">
-              <Wallet className="w-6 h-6" strokeWidth={2.5} />
+      <header className="w-full bg-white dark:bg-[#111827] border-b border-gray-200/80 dark:border-slate-800 px-4 md:px-8 py-2.5 md:py-4 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-4 z-40 shadow-sm shrink-0 transition-colors">
+        <div className="flex items-center gap-4 flex-wrap w-full md:w-auto justify-between md:justify-start">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-[#156045] dark:bg-[#1b7a58] p-2 md:p-2.5 rounded-xl md:rounded-2xl text-white shadow-md shadow-[#156045]/20 shrink-0">
+              <Wallet className="w-5 h-5 md:w-6 md:h-6" strokeWidth={2.5} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-extrabold tracking-tight text-gray-900 dark:text-white">Tu billetera</h1>
-                <span className="bg-[#EAF2EF] dark:bg-[#156045]/20 text-[#156045] dark:text-emerald-400 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">MVP</span>
+              <div className="flex items-center gap-1.5 md:gap-2">
+                <h1 className="text-lg md:text-xl font-extrabold tracking-tight text-gray-900 dark:text-white">Tu billetera</h1>
+                <span className="bg-[#EAF2EF] dark:bg-[#156045]/20 text-[#156045] dark:text-emerald-400 text-[9px] md:text-[10px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider">MVP</span>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5">
+              <p className="text-[10px] md:text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5 leading-tight">
                 Optimizado para registrar gastos rápidos en menos de 30 segundos.
               </p>
             </div>
           </div>
 
           {/* USER PROFILE INFO & SIGN OUT & DELETE ACCOUNT */}
-          <div className="flex items-center gap-3 bg-gray-50 dark:bg-slate-800/40 border border-gray-200/50 dark:border-slate-700/50 px-3.5 py-1.5 rounded-2xl">
+          <div className="flex items-center gap-2 md:gap-3 bg-gray-50 dark:bg-slate-800/40 border border-gray-200/50 dark:border-slate-700/50 px-2.5 md:px-3.5 py-1 md:py-1.5 rounded-xl md:rounded-2xl">
             <div className="flex flex-col">
               <span className="text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-wider leading-none mb-0.5">Cuenta Activa</span>
-              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 max-w-[120px] truncate leading-none" title={user?.email || ''}>
+              <span className="text-[11px] md:text-xs font-bold text-gray-700 dark:text-gray-300 max-w-[100px] md:max-w-[120px] truncate leading-none" title={user?.email || ''}>
                 {user?.email || 'Usuario Google'}
               </span>
             </div>
-            <div className="h-6 w-[1px] bg-gray-200 dark:bg-slate-700 mx-1"></div>
+            <div className="h-5 md:h-6 w-[1px] bg-gray-200 dark:bg-slate-700 mx-1"></div>
             
             {/* Sign Out Button */}
             <button
@@ -1039,29 +1039,29 @@ export default function App() {
         </div>
  
         {/* CONTROLS & CHALLENGE WIDGET */}
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-center md:justify-end">
           {/* CHALLENGE CONTROLLER */}
-          <div className="bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 p-1.5 rounded-xl flex items-center gap-2">
-            <div className="px-2.5">
-              <span className="text-[10px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-widest block">Reto 30 Segundos</span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Clock className={`w-3.5 h-3.5 ${challengeState === 'running' ? 'text-orange-500 animate-spin' : 'text-gray-400 dark:text-gray-500'}`} />
-                <span className="font-mono text-sm font-bold text-gray-700 dark:text-gray-200">{elapsedTime.toFixed(1)}s</span>
+          <div className="bg-[#F8FAFC] dark:bg-slate-800/60 border border-gray-200/70 dark:border-slate-700/60 p-1 md:p-1.5 rounded-xl flex items-center gap-1.5 md:gap-2">
+            <div className="px-1.5 md:px-2.5">
+              <span className="text-[9px] md:text-[10px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-widest block">Reto 30 Segundos</span>
+              <div className="flex items-center gap-1 mt-0.5">
+                <Clock className={`w-3 md:w-3.5 h-3 md:h-3.5 ${challengeState === 'running' ? 'text-orange-500 animate-spin' : 'text-gray-400 dark:text-gray-500'}`} />
+                <span className="font-mono text-xs md:text-sm font-bold text-gray-700 dark:text-gray-200">{elapsedTime.toFixed(1)}s</span>
               </div>
             </div>
             {challengeState === 'running' ? (
               <button 
                 onClick={() => { setChallengeState('idle'); setElapsedTime(0); }}
-                className="bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                className="bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold transition-all cursor-pointer"
               >
                 Cancelar
               </button>
             ) : (
               <button 
                 onClick={startSpeedrun}
-                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-3 py-1.5 rounded-lg text-xs font-black shadow-sm flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-black shadow-sm flex items-center gap-1 transition-all active:scale-95 cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5" />
+                <Sparkles className="w-3 md:w-3.5 h-3 md:h-3.5" />
                 Probar 30s
               </button>
             )}
@@ -1070,41 +1070,41 @@ export default function App() {
           {/* RESET BUTTON */}
           <button
             onClick={resetAllToMockup}
-            className="flex items-center gap-1 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 shadow-sm px-3 py-2.5 rounded-xl text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-all cursor-pointer"
+            className="flex items-center gap-1 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 shadow-sm px-2.5 md:px-3 py-2 md:py-2.5 rounded-xl text-[10px] md:text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-all cursor-pointer"
             title="Resetear al estado del mockup"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <RotateCcw className="w-3 md:w-3.5 h-3 md:h-3.5" />
             Reiniciar
           </button>
 
           {/* DAY ZERO BUTTON */}
           <button
             onClick={clearAllToDayZero}
-            className="flex items-center gap-1 bg-[#F1F6F4] dark:bg-emerald-950/20 hover:bg-[#E2EFE9] dark:hover:bg-emerald-900/20 border border-[#E2EFE9] dark:border-emerald-900/30 shadow-sm px-3 py-2.5 rounded-xl text-xs font-bold text-[#156045] dark:text-emerald-400 hover:text-[#114b36] transition-all cursor-pointer"
+            className="flex items-center gap-1 bg-[#F1F6F4] dark:bg-emerald-950/20 hover:bg-[#E2EFE9] dark:hover:bg-emerald-900/20 border border-[#E2EFE9] dark:border-emerald-900/30 shadow-sm px-2.5 md:px-3 py-2 md:py-2.5 rounded-xl text-[10px] md:text-xs font-bold text-[#156045] dark:text-emerald-400 hover:text-[#114b36] transition-all cursor-pointer"
             title="Limpiar cuenta para modo Día Cero"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-3 md:w-3.5 h-3 md:h-3.5" />
             Día Cero
           </button>
  
           {/* VIEWPORT SELECTOR */}
-          <div className="bg-gray-100 dark:bg-slate-800/50 p-1 rounded-xl flex items-center border border-gray-200/50 dark:border-slate-700/50">
+          <div className="bg-gray-100 dark:bg-slate-800/50 p-0.5 md:p-1 rounded-xl flex items-center border border-gray-200/50 dark:border-slate-700/50">
             <button
               onClick={() => setViewMode('mobile')}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-1 px-2.5 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-[#156045] dark:text-emerald-400 shadow-sm font-extrabold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }`}
             >
-              <Smartphone className="w-3.5 h-3.5" />
+              <Smartphone className="w-3 md:w-3.5 h-3 md:h-3.5" />
               Vista Celular
             </button>
             <button
               onClick={() => setViewMode('full')}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-1 px-2.5 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'full' ? 'bg-white dark:bg-slate-700 text-[#156045] dark:text-emerald-400 shadow-sm font-extrabold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }`}
             >
-              <Maximize2 className="w-3.5 h-3.5" />
+              <Maximize2 className="w-3 md:w-3.5 h-3 md:h-3.5" />
               Completa
             </button>
           </div>
@@ -1112,10 +1112,10 @@ export default function App() {
           {/* THEME TOGGLE */}
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className="flex items-center justify-center bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 shadow-sm p-2.5 rounded-xl text-gray-600 dark:text-gray-300 transition-all cursor-pointer"
+            className="flex items-center justify-center bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 shadow-sm p-2 md:p-2.5 rounded-xl text-gray-600 dark:text-gray-300 transition-all cursor-pointer"
             title={darkMode ? 'Cambiar a Tema Claro' : 'Cambiar a Tema Oscuro'}
           >
-            {darkMode ? <Sun className="w-4 h-4 text-amber-500 animate-pulse" /> : <Moon className="w-4 h-4 text-[#156045]" />}
+            {darkMode ? <Sun className="w-3.5 md:w-4 h-3.5 md:h-4 text-amber-500 animate-pulse" /> : <Moon className="w-3.5 md:w-4 h-3.5 md:h-4 text-[#156045]" />}
           </button>
         </div>
       </header>
@@ -1152,22 +1152,22 @@ export default function App() {
       )}
 
       {/* MAIN CONTAINER WORKSPACE */}
-      <main className="flex-1 flex items-center justify-center p-3 md:p-6 overflow-hidden relative">
+      <main className="flex-1 flex items-center justify-center p-0 md:p-6 overflow-hidden relative">
         
         {viewMode === 'mobile' ? (
           
           /* VIEW MODE: SMARTPHONE BODY SIMULATOR WITH INTERNAL ABSOLUTE MODALS */
-          <div className="relative animate-in zoom-in-95 duration-200 shrink-0">
+          <div className="relative animate-in zoom-in-95 duration-200 shrink-0 w-full h-full md:w-auto md:h-auto flex items-center justify-center">
             {/* Phone physical container */}
-            <div className="w-[395px] h-[815px] bg-[#FAFAFA] dark:bg-[#111C24] rounded-[52px] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] overflow-hidden border-[11px] border-[#18181B] relative flex flex-col transition-colors duration-200">
+            <div className="w-full h-full min-h-[calc(100vh-140px)] md:min-h-0 md:w-[395px] md:h-[815px] bg-[#FAFAFA] dark:bg-[#111C24] rounded-none md:rounded-[52px] shadow-none md:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.25)] overflow-hidden border-0 md:border-[11px] border-[#18181B] relative flex flex-col transition-colors duration-200">
               
               {/* Camera Notch Dynamic Island */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6.5 bg-[#18181B] rounded-b-[20px] z-50 flex items-center justify-center">
+              <div className="hidden md:flex absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6.5 bg-[#18181B] rounded-b-[20px] z-50 items-center justify-center">
                 <span className="w-10 h-1 bg-gray-800 rounded-full"></span>
               </div>
 
               {/* Inside Layout Area */}
-              <div className="flex-1 h-full overflow-hidden flex flex-col relative pt-5">
+              <div className="flex-1 h-full overflow-hidden flex flex-col relative pt-2 md:pt-5">
                 
                 {/* TOAST NOTIFICATION HUD */}
                 {notification && (
@@ -1504,7 +1504,7 @@ export default function App() {
                 </div>
 
                 {/* Absolute iOS-Style Bottom Home Bar decoration */}
-                <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-28 h-1 bg-gray-300 dark:bg-slate-700 rounded-full z-40 pointer-events-none"></div>
+                <div className="hidden md:block absolute bottom-1.5 left-1/2 -translate-x-1/2 w-28 h-1 bg-gray-300 dark:bg-slate-700 rounded-full z-40 pointer-events-none"></div>
 
                 {/* RENDER THE INTERNAL ABSOLUTE OVERLAYS (MODALS) WITHIN PHONE CONTEXT */}
                 {MobileSimulatorModals()}
@@ -1515,7 +1515,7 @@ export default function App() {
         ) : (
           
           /* VIEW MODE: FULL EXPANDED CONTAINER FLUID GRID */
-          <div className="w-full max-w-4xl bg-[#FAFAFA] dark:bg-[#111C24] border border-gray-200/80 dark:border-slate-800 rounded-[32px] shadow-2xl overflow-hidden h-[790px] flex flex-col animate-in fade-in duration-300 relative transition-colors">
+          <div className="w-full h-full min-h-[calc(100vh-140px)] md:min-h-0 md:h-[790px] md:max-w-4xl bg-[#FAFAFA] dark:bg-[#111C24] border-0 md:border border-gray-200/80 dark:border-slate-800 rounded-none md:rounded-[32px] shadow-none md:shadow-2xl overflow-hidden flex flex-col animate-in fade-in duration-300 relative transition-colors">
             
             {/* TOAST NOTIFICATION HUD */}
             {notification && (
