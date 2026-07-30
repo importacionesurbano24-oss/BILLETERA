@@ -28,6 +28,8 @@ import {
 } from 'firebase/auth';
 import {
   Wallet,
+  ChevronDown,
+  ChevronRight,
   Utensils,
   Car,
   ShoppingBag,
@@ -51,7 +53,10 @@ import {
   Mail,
   Settings,
   History,
-  ChevronRight,
+  Receipt,
+  TrendingUp,
+  TrendingDown,
+  Scale,
   ShieldCheck
 } from 'lucide-react';
 
@@ -62,9 +67,20 @@ interface Transaction {
   amount: number;
   category: 'comida' | 'transporte' | 'compras' | 'servicios' | 'entretenimiento' | 'otros';
   day: number;
+  month: string;
 }
 
-type Tab = 'inicio' | 'movimientos' | 'ajustes';
+// Monthly recurring fixed expense template structure
+interface RecurringExpense {
+  id: string;
+  description: string;
+  amount: number;
+  category: 'comida' | 'transporte' | 'compras' | 'servicios' | 'entretenimiento' | 'otros';
+  dayOfMonth: number;
+  paidMonths: string[];
+}
+
+type Tab = 'inicio' | 'gastosFijos' | 'movimientos' | 'ajustes';
 
 // Category Configuration with Premium Color Palettes
 const CATEGORIES = {
@@ -132,8 +148,23 @@ const CATEGORIES = {
 
 const DEFAULT_BUDGET_PLACEHOLDER = 2000000;
 
+const MONTH_NAMES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// Formats a Date as "MesNombre AAAA" — matches the month-key format already stored in Firestore
+const formatMonthLabel = (date: Date) => `${MONTH_NAMES_ES[date.getMonth()]} ${date.getFullYear()}`;
+
 // Derives "today" from the real device clock instead of a hardcoded day
 const getCurrentDayOfMonth = () => Math.min(31, Math.max(1, new Date().getDate()));
+
+// Rolling window of selectable months: 1 month back through 3 months ahead
+const getAvailableMonths = () => {
+  const now = new Date();
+  const months: string[] = [];
+  for (let offset = -1; offset <= 3; offset++) {
+    months.push(formatMonthLabel(new Date(now.getFullYear(), now.getMonth() + offset, 1)));
+  }
+  return months;
+};
 
 export default function App() {
   // Authentication states
@@ -150,11 +181,25 @@ export default function App() {
   const [walletId, setWalletId] = useState<string>('');
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>([]);
   const [budget, setBudget] = useState<number>(DEFAULT_BUDGET_PLACEHOLDER);
+  const [budgets, setBudgets] = useState<Record<string, number>>({});
   const [dbLoading, setDbLoading] = useState(true);
 
   // Navigation between the app's sections
   const [activeTab, setActiveTab] = useState<Tab>('inicio');
+
+  // Selected month (real, functional — every collection below is keyed by this string)
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    return localStorage.getItem('tb_selected_month') || formatMonthLabel(new Date());
+  });
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const handleSelectMonth = (m: string) => {
+    setSelectedMonth(m);
+    localStorage.setItem('tb_selected_month', m);
+    setShowMonthPicker(false);
+  };
+  const activeBudget = budgets[selectedMonth] ?? budget ?? DEFAULT_BUDGET_PLACEHOLDER;
 
   // Modal displays
   const [showNewExpenseModal, setShowNewExpenseModal] = useState(false);
@@ -178,8 +223,16 @@ export default function App() {
   // Budget editor input (lives in the Ajustes tab)
   const [budgetInput, setBudgetInput] = useState('');
 
+  // Input states for the recurring/fixed expense form (Gastos Fijos tab)
+  const [recAmount, setRecAmount] = useState('');
+  const [recCategory, setRecCategory] = useState<keyof typeof CATEGORIES>('servicios');
+  const [recDesc, setRecDesc] = useState('');
+  const [recDayOfMonth, setRecDayOfMonth] = useState<number>(5);
+  const [editingRecId, setEditingRecId] = useState<string | null>(null);
+
   const unsubWalletRef = useRef<(() => void) | null>(null);
   const unsubTxRef = useRef<(() => void) | null>(null);
+  const unsubRecRef = useRef<(() => void) | null>(null);
   const isDeletingAccountRef = useRef(false);
 
   // Feedback Notification trigger
@@ -224,10 +277,10 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Keep the budget editor input in sync with the live value from Firestore
+  // Keep the budget editor input in sync with the selected month's live value
   useEffect(() => {
-    setBudgetInput(budget.toString());
-  }, [budget]);
+    setBudgetInput(activeBudget.toString());
+  }, [activeBudget]);
 
   // Sync state to Cloud Firestore in real time
   useEffect(() => {
@@ -240,6 +293,9 @@ export default function App() {
     const unsubWallet = onSnapshot(walletRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        if (data.budgets) {
+          setBudgets(data.budgets);
+        }
         if (typeof data.budget === 'number') {
           setBudget(data.budget);
           setNeedBudgetSetup(false);
@@ -248,6 +304,7 @@ export default function App() {
         // Document does not exist yet (first load) -> prompt user for budget setup
         setNeedBudgetSetup(true);
         setBudget(0);
+        setBudgets({});
         setTransactions([]);
         setDbLoading(false);
       }
@@ -267,7 +324,8 @@ export default function App() {
           description: data.description || '',
           amount: Number(data.amount) || 0,
           category: data.category || 'comida',
-          day: Number(data.day) || getCurrentDayOfMonth()
+          day: Number(data.day) || getCurrentDayOfMonth(),
+          month: data.month || formatMonthLabel(new Date())
         });
       });
 
@@ -280,8 +338,33 @@ export default function App() {
       setDbLoading(false);
     });
 
+    // 3. Subscribe to Recurring Expenses
+    const recQuery = query(
+      collection(db, 'recurring_expenses'),
+      where('walletId', '==', walletId)
+    );
+    const unsubRec = onSnapshot(recQuery, (querySnapshot) => {
+      const recs: RecurringExpense[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        recs.push({
+          id: docSnap.id,
+          description: data.description || '',
+          amount: Number(data.amount) || 0,
+          category: data.category || 'servicios',
+          dayOfMonth: Number(data.dayOfMonth) || 5,
+          paidMonths: Array.isArray(data.paidMonths) ? data.paidMonths : []
+        });
+      });
+      recs.sort((a, b) => a.dayOfMonth - b.dayOfMonth);
+      setRecurringExpenses(recs);
+    }, (error) => {
+      console.error("Error fetching recurring expenses:", error);
+    });
+
     unsubWalletRef.current = unsubWallet;
     unsubTxRef.current = unsubTx;
+    unsubRecRef.current = unsubRec;
 
     return () => {
       if (unsubWalletRef.current) {
@@ -291,6 +374,10 @@ export default function App() {
       if (unsubTxRef.current) {
         unsubTxRef.current();
         unsubTxRef.current = null;
+      }
+      if (unsubRecRef.current) {
+        unsubRecRef.current();
+        unsubRecRef.current = null;
       }
     };
   }, [walletId]);
@@ -303,23 +390,20 @@ export default function App() {
     }, 3500);
   };
 
+  // Filter transactions to the selected month
+  const monthlyTransactions = transactions.filter(tx => tx.month === selectedMonth);
+
   // Basic stats derived from transaction records
-  const totalSpent = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-  const availableAmount = budget - totalSpent;
-  const spentPercentage = budget > 0 ? Math.round((totalSpent / budget) * 100) : 0;
+  const totalSpent = monthlyTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+  const availableAmount = activeBudget - totalSpent;
+  const spentPercentage = activeBudget > 0 ? Math.round((totalSpent / activeBudget) * 100) : 0;
   const availablePercentage = Math.max(0, 100 - spentPercentage);
   const currentDay = getCurrentDayOfMonth();
-
-  // Real current month, derived from the device clock (never hardcoded)
-  const monthLabel = (() => {
-    const raw = new Date().toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
-    return raw.charAt(0).toUpperCase() + raw.slice(1);
-  })();
-  const monthShort = new Date().toLocaleDateString('es-CO', { month: 'short' }).replace('.', '');
+  const isCurrentMonth = selectedMonth === formatMonthLabel(new Date());
 
   // Interactive daily aggregation
   const dailySpentMap = Array.from({ length: 32 }, () => 0);
-  transactions.forEach((tx) => {
+  monthlyTransactions.forEach((tx) => {
     if (tx.day >= 1 && tx.day <= 31) {
       dailySpentMap[tx.day] += tx.amount;
     }
@@ -337,13 +421,21 @@ export default function App() {
   // Transaction selection helper
   const selectedTransaction = transactions.find(t => t.id === selectedTransactionId) || null;
 
-  // Search filter for Movimientos
-  const sortedTransactionsChronologically = [...transactions].sort((a, b) => b.day - a.day);
+  // Search filter for Movimientos (scoped to the selected month)
+  const sortedTransactionsChronologically = [...monthlyTransactions].sort((a, b) => b.day - a.day);
   const filteredTransactions = sortedTransactionsChronologically.filter((tx) => {
     const matchesSearch = tx.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === 'todos' || tx.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
+
+  // Fixed/recurring expense helpers, scoped to the selected month
+  const isRecurringPaid = (rec: RecurringExpense) => rec.paidMonths.includes(selectedMonth);
+  const recurringTotal = recurringExpenses.reduce((sum, r) => sum + r.amount, 0);
+  const recurringPaidAmount = recurringExpenses.filter(isRecurringPaid).reduce((sum, r) => sum + r.amount, 0);
+  const recurringPendingAmount = recurringTotal - recurringPaidAmount;
+  const recurringPaidCount = recurringExpenses.filter(isRecurringPaid).length;
+  const projectedLeftover = activeBudget - recurringTotal;
 
   // Action: Edit expense handler
   const handleEditExpense = (tx: Transaction) => {
@@ -388,6 +480,7 @@ export default function App() {
           amount: cleanAmount,
           category: txCategory,
           day: Math.min(31, Math.max(1, txDay)),
+          month: selectedMonth,
           createdAt: new Date().toISOString()
         });
         triggerNotification('Gasto registrado con éxito 💸', 'success');
@@ -415,6 +508,124 @@ export default function App() {
         console.error("Error deleting expense:", err);
       }
     }
+  };
+
+  // --- RECURRING / FIXED MONTHLY EXPENSES HANDLERS ---
+  const handleToggleRecurringPaid = async (rec: RecurringExpense) => {
+    try {
+      const currentlyPaid = isRecurringPaid(rec);
+      const newMonths = currentlyPaid
+        ? rec.paidMonths.filter(m => m !== selectedMonth)
+        : [...rec.paidMonths, selectedMonth];
+      await updateDoc(doc(db, 'recurring_expenses', rec.id), { paidMonths: newMonths });
+      triggerNotification(!currentlyPaid ? 'Gasto marcado como pagado' : 'Gasto marcado como pendiente', 'success');
+    } catch (error) {
+      console.error("Error toggling paid status:", error);
+      triggerNotification('Error al cambiar el estado del pago', 'delete');
+    }
+  };
+
+  const handleRegisterRecurringTransaction = async (rec: RecurringExpense) => {
+    try {
+      setDbLoading(true);
+      await addDoc(collection(db, 'transactions'), {
+        walletId,
+        description: `${rec.description} (Mensual)`,
+        amount: rec.amount,
+        category: rec.category,
+        day: getCurrentDayOfMonth(),
+        month: selectedMonth,
+        createdAt: new Date().toISOString()
+      });
+
+      const newMonths = rec.paidMonths.includes(selectedMonth) ? rec.paidMonths : [...rec.paidMonths, selectedMonth];
+      await updateDoc(doc(db, 'recurring_expenses', rec.id), { paidMonths: newMonths });
+
+      triggerNotification(`¡"${rec.description}" registrado en movimientos!`, 'success');
+    } catch (error) {
+      console.error("Error registering recurring expense transaction:", error);
+      triggerNotification('Error al registrar el gasto', 'delete');
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const handleSaveRecurringExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recDesc.trim() || !recAmount) {
+      alert('Por favor completa todos los campos.');
+      return;
+    }
+    const parsedAmount = parseInt(recAmount.replace(/\D/g, ''), 10);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      alert('Por favor ingresa un monto válido mayor a 0.');
+      return;
+    }
+
+    try {
+      setDbLoading(true);
+      if (editingRecId) {
+        await updateDoc(doc(db, 'recurring_expenses', editingRecId), {
+          description: recDesc.trim(),
+          amount: parsedAmount,
+          category: recCategory,
+          dayOfMonth: Math.max(1, Math.min(31, Number(recDayOfMonth) || 5))
+        });
+        triggerNotification(`Gasto fijo "${recDesc}" actualizado`, 'success');
+      } else {
+        await addDoc(collection(db, 'recurring_expenses'), {
+          walletId,
+          description: recDesc.trim(),
+          amount: parsedAmount,
+          category: recCategory,
+          dayOfMonth: Math.max(1, Math.min(31, Number(recDayOfMonth) || 5)),
+          paidMonths: [],
+          createdAt: new Date().toISOString()
+        });
+        triggerNotification(`Gasto fijo "${recDesc}" creado`, 'success');
+      }
+
+      setRecAmount('');
+      setRecDesc('');
+      setRecCategory('servicios');
+      setRecDayOfMonth(5);
+      setEditingRecId(null);
+    } catch (error) {
+      console.error("Error saving recurring expense:", error);
+      triggerNotification('Error al guardar el gasto fijo', 'delete');
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const handleDeleteRecurringExpense = async (id: string, desc: string) => {
+    if (confirm(`¿Eliminar el gasto fijo "${desc}"?`)) {
+      try {
+        await deleteDoc(doc(db, 'recurring_expenses', id));
+        triggerNotification(`Gasto fijo "${desc}" eliminado`, 'delete');
+        if (editingRecId === id) {
+          handleCancelEditRecurring();
+        }
+      } catch (error) {
+        console.error("Error deleting recurring expense:", error);
+      }
+    }
+  };
+
+  const handleStartEditRecurring = (rec: RecurringExpense) => {
+    setEditingRecId(rec.id);
+    setRecDesc(rec.description);
+    setRecAmount(rec.amount.toString());
+    setRecCategory(rec.category);
+    setRecDayOfMonth(rec.dayOfMonth);
+  };
+
+  const handleCancelEditRecurring = () => {
+    setEditingRecId(null);
+    setRecDesc('');
+    setRecAmount('');
+    setRecCategory('servicios');
+    setRecDayOfMonth(5);
   };
 
   // --- AUTHENTICATION HANDLERS ---
@@ -534,6 +745,10 @@ export default function App() {
         unsubTxRef.current();
         unsubTxRef.current = null;
       }
+      if (unsubRecRef.current) {
+        unsubRecRef.current();
+        unsubRecRef.current = null;
+      }
 
       // 2. Delete all transactions
       const txQuery = query(collection(db, 'transactions'), where('walletId', '==', uid));
@@ -541,22 +756,30 @@ export default function App() {
       const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
       await Promise.all(deletePromises);
 
-      // 3. Delete wallet document
+      // 3. Delete all recurring expenses
+      const recQuery = query(collection(db, 'recurring_expenses'), where('walletId', '==', uid));
+      const recSnapshot = await getDocs(recQuery);
+      const deleteRecPromises = recSnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deleteRecPromises);
+
+      // 4. Delete wallet document
       await deleteDoc(doc(db, 'wallets', uid));
 
       // Reset local confirmation state
       setShowDeleteConfirmScreen(false);
       setDeleteConfirmInput('');
 
-      // 4. Reset state completely to force LOGIN view rendering
+      // 5. Reset state completely to force LOGIN view rendering
       setNeedBudgetSetup(false);
       setWalletId('');
       setUser(null);
       setBudget(0);
+      setBudgets({});
       setTransactions([]);
+      setRecurringExpenses([]);
       localStorage.removeItem('tb_wallet_id');
 
-      // 5. Delete Auth User & Sign Out
+      // 6. Delete Auth User & Sign Out
       try {
         await deleteUser(currentUser);
         await signOut(auth);
@@ -593,6 +816,7 @@ export default function App() {
       setDbLoading(true);
       await setDoc(doc(db, 'wallets', walletId), {
         budget: parsed,
+        budgets: { [selectedMonth]: parsed },
         createdAt: new Date().toISOString()
       });
       setNeedBudgetSetup(false);
@@ -610,7 +834,10 @@ export default function App() {
     const parsed = parseInt(budgetInput.replace(/\D/g, ''), 10);
     if (!isNaN(parsed) && parsed >= 0) {
       try {
-        await setDoc(doc(db, 'wallets', walletId), { budget: parsed }, { merge: true });
+        await setDoc(doc(db, 'wallets', walletId), {
+          budget: parsed,
+          budgets: { ...budgets, [selectedMonth]: parsed }
+        }, { merge: true });
         triggerNotification('Presupuesto mensual actualizado', 'info');
       } catch (err) {
         console.error("Error updating budget:", err);
@@ -811,9 +1038,9 @@ export default function App() {
                 onClick={() => setActiveTab('ajustes')}
                 className="font-bold text-gray-900 dark:text-white hover:underline cursor-pointer"
               >
-                $ {formatCurrency(budget)}
+                $ {formatCurrency(activeBudget)}
               </button>{' '}
-              presupuestado este mes
+              presupuestado en {selectedMonth}
             </p>
 
             <div className="relative h-2 bg-[#DCE8E3] dark:bg-[#153a2b] rounded-full overflow-hidden mt-5 mb-3">
@@ -856,7 +1083,7 @@ export default function App() {
                 Presupuesto
                 <Edit3 className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
               </span>
-              <p className="text-lg font-black text-gray-900 dark:text-white mt-1">$ {formatCurrency(budget)}</p>
+              <p className="text-lg font-black text-gray-900 dark:text-white mt-1">$ {formatCurrency(activeBudget)}</p>
             </button>
             <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-4 shadow-sm transition-colors">
               <span className="text-[10px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-wider block">Gastado</span>
@@ -869,7 +1096,7 @@ export default function App() {
             <div className="flex justify-between items-center mb-4">
               <div>
                 <h3 className="text-xs font-extrabold text-gray-900 dark:text-white">Gastos diarios</h3>
-                <p className="text-[10px] text-gray-400 dark:text-gray-400">Ritmo de este mes (1 - 31)</p>
+                <p className="text-[10px] text-gray-400 dark:text-gray-400">Ritmo de {selectedMonth} (1 - 31)</p>
               </div>
               <span className="text-xs font-extrabold text-[#156045] dark:text-emerald-400 bg-[#EAF2EF] dark:bg-emerald-950/40 px-2.5 py-1 rounded-md">
                 ${formatCurrency(totalSpent)}
@@ -887,7 +1114,7 @@ export default function App() {
                   }}
                 >
                   <span className="text-gray-300 dark:text-gray-300 font-bold whitespace-nowrap">
-                    Día {hoveredDay.day} de {monthLabel}
+                    Día {hoveredDay.day} de {selectedMonth}
                   </span>
                   <span className="text-emerald-400 dark:text-emerald-400 font-black whitespace-nowrap text-sm mt-0.5">
                     $ {formatCurrency(hoveredDay.amount)}
@@ -900,7 +1127,7 @@ export default function App() {
                 {Array.from({ length: 31 }, (_, i) => {
                   const day = i + 1;
                   const amount = dailySpentMap[day];
-                  const isToday = day === currentDay;
+                  const isToday = isCurrentMonth && day === currentDay;
                   const heightPercent = amount > 0 ? (amount / maxDailySpend) * 100 : 0;
                   return (
                     <div
@@ -926,7 +1153,7 @@ export default function App() {
               <div className="flex justify-between mt-1.5 text-[9px] font-extrabold text-gray-400 dark:text-gray-400">
                 <span>Día 1</span>
                 <span>Día 10</span>
-                <span className="text-[#EF6950]">Día {currentDay} (Hoy)</span>
+                <span className={isCurrentMonth ? 'text-[#EF6950]' : ''}>{isCurrentMonth ? `Día ${currentDay} (Hoy)` : 'Día 20'}</span>
                 <span>Día 31</span>
               </div>
             </div>
@@ -948,18 +1175,18 @@ export default function App() {
             </div>
 
             <div className="space-y-2.5">
-              {transactions.length === 0 ? (
+              {monthlyTransactions.length === 0 ? (
                 <div className="py-8 text-center flex flex-col items-center justify-center gap-2">
                   <div className="w-10 h-10 rounded-full bg-[#EAF2EF] dark:bg-emerald-950/40 text-[#156045] dark:text-emerald-400 flex items-center justify-center mb-1">
                     <Wallet className="w-5 h-5" />
                   </div>
-                  <p className="text-xs font-black text-gray-800 dark:text-gray-200">Tu billetera está vacía</p>
+                  <p className="text-xs font-black text-gray-800 dark:text-gray-200">Sin movimientos en {selectedMonth}</p>
                   <p className="text-[10px] text-gray-400 dark:text-gray-400 max-w-[220px] leading-relaxed mx-auto">
                     Presiona el botón verde <strong>"+"</strong> para agregar tu primer gasto.
                   </p>
                 </div>
               ) : (
-                transactions.slice(0, 5).map((tx) => {
+                sortedTransactionsChronologically.slice(0, 5).map((tx) => {
                   const config = CATEGORIES[tx.category];
                   const Icon = config.icon;
                   return (
@@ -974,7 +1201,7 @@ export default function App() {
                         </div>
                         <div className="text-left min-w-0">
                           <p className="text-xs font-extrabold text-gray-900 dark:text-white group-hover:text-[#156045] dark:group-hover:text-emerald-400 transition-colors truncate">{tx.description}</p>
-                          <p className="text-[10px] text-gray-400 dark:text-gray-400 font-semibold">{config.label} • {tx.day} {monthShort}</p>
+                          <p className="text-[10px] text-gray-400 dark:text-gray-400 font-semibold">{config.label} • Día {tx.day}</p>
                         </div>
                       </div>
                       <span className="text-xs font-black text-gray-900 dark:text-gray-100 shrink-0 ml-2">
@@ -992,7 +1219,240 @@ export default function App() {
   }
 
   /**
-   * MOVIMIENTOS TAB — searchable, filterable full transaction history
+   * GASTOS FIJOS TAB — projected summary, recurring expense tracking & management
+   */
+  function renderGastosFijosTab() {
+    return (
+      <div className="max-w-3xl mx-auto space-y-5">
+        <div>
+          <h2 className="text-lg font-black text-gray-900 dark:text-white tracking-tight">Gastos Fijos</h2>
+          <p className="text-xs text-gray-400 dark:text-gray-500 font-semibold mt-0.5">Tus pagos recurrentes de {selectedMonth}</p>
+        </div>
+
+        {/* Projected summary card */}
+        {recurringExpenses.length > 0 && (
+          <div className="bg-white dark:bg-slate-800/80 border border-gray-200/60 dark:border-slate-700/60 p-5 rounded-[22px] shadow-sm space-y-3 transition-colors">
+            <span className="text-[9px] font-black text-[#156045] dark:text-emerald-400 uppercase tracking-widest block">Proyección financiera</span>
+
+            <div className="flex items-center justify-between p-3 bg-gray-50/60 dark:bg-slate-850/30 border border-gray-100/60 dark:border-slate-800/60 rounded-xl">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-gray-900 dark:text-white">Presupuesto del mes</p>
+                  <p className="text-[9px] text-gray-400 dark:text-gray-500 font-semibold">Lo que tienes disponible</p>
+                </div>
+              </div>
+              <span className="text-sm font-black text-[#156045] dark:text-emerald-400">${formatCurrency(activeBudget)}</span>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-gray-50/60 dark:bg-slate-850/30 border border-gray-100/60 dark:border-slate-800/60 rounded-xl">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                  <TrendingDown className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-gray-900 dark:text-white">Total gastos fijos</p>
+                  <p className="text-[9px] text-gray-400 dark:text-gray-500 font-semibold">Lo que toca pagar</p>
+                </div>
+              </div>
+              <span className="text-sm font-black text-rose-600 dark:text-rose-400">-${formatCurrency(recurringTotal)}</span>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-[#EAF2EF] dark:bg-emerald-950/20 border border-emerald-100/40 dark:border-emerald-900/20 rounded-xl">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100/60 dark:bg-emerald-900/40 text-[#156045] dark:text-emerald-400 flex items-center justify-center shrink-0">
+                  <Scale className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-black text-gray-900 dark:text-white">Debería quedarte</p>
+                  <p className="text-[9px] text-gray-400 dark:text-gray-500 font-semibold">Presupuesto menos gastos fijos</p>
+                </div>
+              </div>
+              <span className={`text-sm font-black ${projectedLeftover >= 0 ? 'text-[#156045] dark:text-emerald-400' : 'text-rose-600'}`}>
+                ${formatCurrency(projectedLeftover)}
+              </span>
+            </div>
+
+            {recurringPendingAmount > 0 && (
+              <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100/40 dark:border-amber-900/20 rounded-xl flex items-center justify-between">
+                <span className="text-[10px] text-gray-600 dark:text-gray-400 font-bold">Pendiente de pagar este mes:</span>
+                <span className="text-xs font-black text-amber-700 dark:text-amber-400">${formatCurrency(recurringPendingAmount)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Recurring expenses list + progress */}
+        <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700/60 rounded-[22px] p-5 shadow-sm transition-colors">
+          {recurringExpenses.length === 0 ? (
+            <div className="text-center py-6">
+              <Receipt className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
+              <p className="text-xs font-black text-gray-800 dark:text-gray-200">¿Tienes gastos fijos todos los meses?</p>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 max-w-[260px] mx-auto leading-normal mt-1">
+                Agrega tu arriendo, planes de internet o streaming abajo para registrarlos con un solo toque cada mes.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1.5 mb-4">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400">
+                    Progreso de pagos ({recurringPaidCount} de {recurringExpenses.length})
+                  </span>
+                  <span className="text-[11px] font-black text-[#156045] dark:text-emerald-400">
+                    ${formatCurrency(recurringPaidAmount)} / ${formatCurrency(recurringTotal)}
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-gray-100 dark:bg-slate-700/50 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full transition-all duration-500"
+                    style={{ width: `${recurringTotal > 0 ? Math.round((recurringPaidAmount / recurringTotal) * 100) : 0}%` }}
+                  ></div>
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                {recurringExpenses.map((rec) => {
+                  const catConfig = CATEGORIES[rec.category];
+                  const Icon = catConfig.icon;
+                  const paid = isRecurringPaid(rec);
+                  return (
+                    <div
+                      key={rec.id}
+                      className="flex items-center justify-between p-2.5 bg-gray-50/70 dark:bg-slate-850/30 border border-gray-100 dark:border-slate-800 rounded-xl transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl ${catConfig.bgColor} ${catConfig.textColor} flex items-center justify-center shrink-0`}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <div className="text-left min-w-0">
+                          <p className="text-xs font-bold text-gray-900 dark:text-white truncate leading-snug">{rec.description}</p>
+                          <p className="text-[9px] text-gray-400 dark:text-gray-500 font-semibold">Día {rec.dayOfMonth} de cada mes • ${formatCurrency(rec.amount)}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {paid ? (
+                          <button
+                            onClick={() => handleToggleRecurringPaid(rec)}
+                            className="px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition-colors cursor-pointer"
+                            title="Marcar como pendiente"
+                          >
+                            ✓ Pagado
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleRegisterRecurringTransaction(rec)}
+                            className="px-2.5 py-1 bg-[#156045] hover:bg-[#114b36] text-white text-[10px] font-black rounded-lg transition-colors shadow-sm cursor-pointer"
+                            title="Registrar este gasto en tus movimientos"
+                          >
+                            Pagar
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleStartEditRecurring(rec)}
+                          className="p-1.5 text-gray-400 dark:text-gray-400 hover:text-[#156045] dark:hover:text-emerald-400 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                          title="Editar"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRecurringExpense(rec.id, rec.description)}
+                          className="p-1.5 text-gray-400 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Add / edit recurring expense form */}
+        <form onSubmit={handleSaveRecurringExpense} className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700/60 rounded-[22px] p-5 shadow-sm space-y-3.5 transition-colors">
+          <h4 className="text-xs font-extrabold text-gray-900 dark:text-white">
+            {editingRecId ? 'Editar gasto fijo' : 'Agregar gasto fijo'}
+          </h4>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 sm:col-span-1">
+              <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">Concepto</label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. Netflix, Arriendo, Luz"
+                value={recDesc}
+                onChange={(e) => setRecDesc(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+              />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">Monto ($)</label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. 45000"
+                value={recAmount}
+                onChange={(e) => setRecAmount(e.target.value.replace(/\D/g, ''))}
+                className="w-full px-3.5 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">Categoría</label>
+              <select
+                value={recCategory}
+                onChange={(e) => setRecCategory(e.target.value as keyof typeof CATEGORIES)}
+                className="w-full px-3 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+              >
+                {Object.entries(CATEGORIES).map(([key, value]) => (
+                  <option key={key} value={key}>{value.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">Día de cobro</label>
+              <input
+                type="number"
+                min="1"
+                max="31"
+                required
+                value={recDayOfMonth}
+                onChange={(e) => setRecDayOfMonth(Math.max(1, Math.min(31, Number(e.target.value) || 1)))}
+                className="w-full px-3 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            {editingRecId && (
+              <button
+                type="button"
+                onClick={handleCancelEditRecurring}
+                className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+            )}
+            <button
+              type="submit"
+              className="bg-[#156045] hover:bg-[#114b36] text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer"
+            >
+              {editingRecId ? 'Guardar cambios' : 'Agregar gasto'}
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  /**
+   * MOVIMIENTOS TAB — searchable, filterable transaction history for the selected month
    */
   function renderMovimientosTab() {
     return (
@@ -1000,11 +1460,10 @@ export default function App() {
         <div className="mb-4">
           <h2 className="text-lg font-black text-gray-900 dark:text-white tracking-tight">Movimientos</h2>
           <p className="text-xs text-gray-400 dark:text-gray-500 font-semibold mt-0.5">
-            {filteredTransactions.length} de {transactions.length} registros de {monthLabel}
+            {filteredTransactions.length} de {monthlyTransactions.length} registros de {selectedMonth}
           </p>
         </div>
 
-        {/* Search Input */}
         <div className="relative mb-3">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
           <input
@@ -1021,7 +1480,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Category Filter Row */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 hide-scrollbar mb-4">
           <button
             onClick={() => setCategoryFilter('todos')}
@@ -1045,13 +1503,12 @@ export default function App() {
           ))}
         </div>
 
-        {/* Transaction List */}
         <div className="space-y-3">
           {filteredTransactions.length === 0 ? (
             <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
               <AlertCircle className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
               <p className="text-xs font-bold text-gray-400 dark:text-gray-500">No hay movimientos registrados</p>
-              <p className="text-[10px] text-gray-400 dark:text-gray-500">Intenta cambiar la búsqueda o categoría</p>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500">Intenta cambiar la búsqueda, categoría o mes</p>
             </div>
           ) : (
             filteredTransactions.map((tx) => {
@@ -1072,7 +1529,7 @@ export default function App() {
                         {tx.description}
                       </h4>
                       <p className="text-[10px] text-gray-400 dark:text-gray-400 font-bold mt-0.5">
-                        {config.label} • Día {tx.day} de {monthLabel}
+                        {config.label} • Día {tx.day} de {selectedMonth}
                       </p>
                     </div>
                   </div>
@@ -1102,7 +1559,6 @@ export default function App() {
           <p className="text-xs text-gray-400 dark:text-gray-500 font-semibold mt-0.5">Tu cuenta y presupuesto</p>
         </div>
 
-        {/* Account card */}
         <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-5 shadow-sm flex items-center gap-3.5 transition-colors">
           <div className="w-11 h-11 rounded-full bg-[#EAF2EF] dark:bg-emerald-950/40 text-[#156045] dark:text-emerald-400 flex items-center justify-center shrink-0">
             <UserIcon className="w-5 h-5" />
@@ -1115,7 +1571,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Theme toggle */}
         <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-4 shadow-sm flex items-center justify-between transition-colors">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gray-50 dark:bg-slate-700/60 flex items-center justify-center text-gray-500 dark:text-gray-300 shrink-0">
@@ -1135,12 +1590,11 @@ export default function App() {
           </button>
         </div>
 
-        {/* Budget editor */}
         <form onSubmit={handleUpdateBudget} className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3.5 transition-colors">
           <div>
             <h4 className="text-xs font-extrabold text-gray-900 dark:text-white">Presupuesto mensual</h4>
             <p className="text-[11px] text-gray-400 dark:text-gray-500 font-medium leading-relaxed mt-0.5">
-              Ajusta el dinero disponible para {monthLabel}. El porcentaje de gasto se recalcula al instante.
+              Ajusta el dinero disponible para {selectedMonth}. El porcentaje de gasto se recalcula al instante.
             </p>
           </div>
           <div>
@@ -1164,15 +1618,13 @@ export default function App() {
           </button>
         </form>
 
-        {/* Trust / security note */}
         <div className="flex items-start gap-2.5 px-1">
           <ShieldCheck className="w-4 h-4 text-[#156045] dark:text-emerald-400 mt-0.5 shrink-0" />
           <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed">
-            Tus movimientos y presupuesto se guardan de forma privada y se sincronizan en la nube con tu cuenta.
+            Tus movimientos, gastos fijos y presupuesto se guardan de forma privada y se sincronizan en la nube con tu cuenta.
           </p>
         </div>
 
-        {/* Sign out */}
         <button
           onClick={handleSignOut}
           className="w-full flex items-center justify-center gap-2 py-3 bg-white dark:bg-slate-800/80 hover:bg-gray-50 dark:hover:bg-slate-700/80 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 rounded-xl font-bold text-xs transition-all cursor-pointer"
@@ -1181,13 +1633,12 @@ export default function App() {
           Cerrar sesión
         </button>
 
-        {/* Danger zone */}
         <div className="pt-4 border-t border-red-100 dark:border-red-950/30">
           {!showDeleteConfirmScreen ? (
             <div className="p-4 bg-red-50/50 dark:bg-red-950/10 rounded-2xl border border-red-100/60 dark:border-red-950/20">
               <h4 className="text-xs font-extrabold text-red-600 dark:text-red-400 uppercase tracking-wider mb-1.5">Zona de peligro</h4>
               <p className="text-[11px] text-gray-600 dark:text-gray-400 font-semibold leading-normal">
-                Eliminar tu cuenta borra de forma definitiva tu perfil y todo tu historial de gastos de la nube.
+                Eliminar tu cuenta borra de forma definitiva tu perfil, tus gastos fijos y todo tu historial de gastos de la nube.
               </p>
               <button
                 type="button"
@@ -1204,7 +1655,7 @@ export default function App() {
             <div className="space-y-4 animate-in fade-in duration-200">
               <div className="p-3.5 bg-red-100/30 dark:bg-red-950/25 border border-red-200 dark:border-red-900/30 rounded-2xl text-red-700 dark:text-red-400">
                 <p className="text-xs font-bold leading-relaxed">
-                  ⚠️ <strong>Atención:</strong> esta acción es irreversible. Se eliminará tu cuenta y todos tus datos (presupuesto, gastos e historial) de forma permanente.
+                  ⚠️ <strong>Atención:</strong> esta acción es irreversible. Se eliminará tu cuenta y todos tus datos (presupuesto, gastos fijos, gastos e historial) de forma permanente.
                 </p>
               </div>
 
@@ -1397,7 +1848,7 @@ export default function App() {
 
             <div>
               <label className="block text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1 text-left">
-                Día del Gasto ({monthLabel})
+                Día del Gasto ({selectedMonth})
               </label>
               <div className="flex items-center gap-3">
                 <input
@@ -1489,13 +1940,13 @@ export default function App() {
                 <span className="text-gray-400 dark:text-gray-500 font-bold">Fecha de Registro</span>
                 <span className="font-extrabold text-gray-800 dark:text-gray-200 flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
-                  Día {selectedTransaction.day} de {monthLabel}
+                  Día {selectedTransaction.day} de {selectedTransaction.month}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="text-gray-400 dark:text-gray-500 font-bold">Porcentaje Presupuestal</span>
                 <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                  {budget > 0 ? ((selectedTransaction.amount / budget) * 100).toFixed(1) : 0}% del total
+                  {activeBudget > 0 ? ((selectedTransaction.amount / activeBudget) * 100).toFixed(1) : 0}% del total
                 </span>
               </div>
             </div>
@@ -1539,6 +1990,7 @@ export default function App() {
 
   const TABS: { id: Tab; label: string; icon: typeof Wallet }[] = [
     { id: 'inicio', label: 'Inicio', icon: Wallet },
+    { id: 'gastosFijos', label: 'Fijos', icon: Receipt },
     { id: 'movimientos', label: 'Movimientos', icon: History },
     { id: 'ajustes', label: 'Ajustes', icon: Settings }
   ];
@@ -1552,12 +2004,34 @@ export default function App() {
           <div className="bg-[#156045] dark:bg-[#1b7a58] p-2 rounded-xl text-white shadow-sm shadow-[#156045]/20">
             <Wallet className="w-5 h-5" strokeWidth={2.5} />
           </div>
-          <div>
-            <h1 className="text-sm font-black text-gray-900 dark:text-white tracking-tight leading-none">Tu billetera</h1>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold mt-0.5">{monthLabel}</p>
-          </div>
+          <h1 className="text-sm font-black text-gray-900 dark:text-white tracking-tight leading-none">Tu billetera</h1>
         </div>
         <div className="flex items-center gap-1.5">
+          {/* Month picker — real, functional selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMonthPicker(!showMonthPicker)}
+              className="flex items-center gap-1 bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 px-3 py-2 rounded-full text-[11px] font-bold text-gray-700 dark:text-gray-200 transition-colors cursor-pointer"
+            >
+              {selectedMonth}
+              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+            </button>
+            {showMonthPicker && (
+              <div className="absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-lg py-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                {getAvailableMonths().map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => handleSelectMonth(m)}
+                    className={`w-full text-left px-4 py-2 text-xs font-bold block transition-colors cursor-pointer ${
+                      m === selectedMonth ? 'text-[#156045] dark:text-emerald-400 bg-gray-50 dark:bg-slate-700/60' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setDarkMode(!darkMode)}
             className="w-9 h-9 rounded-full bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-slate-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
@@ -1595,6 +2069,7 @@ export default function App() {
         ) : (
           <>
             {activeTab === 'inicio' && renderInicioTab()}
+            {activeTab === 'gastosFijos' && renderGastosFijosTab()}
             {activeTab === 'movimientos' && renderMovimientosTab()}
             {activeTab === 'ajustes' && renderAjustesTab()}
           </>
@@ -1603,7 +2078,7 @@ export default function App() {
 
       {/* BOTTOM TAB BAR — the "+" action lives inside this fixed strip (raised, centered)
           so it can never drift over scrolled page content, unlike a viewport-pinned FAB. */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-[#111C24] border-t border-gray-100 dark:border-slate-800 px-2 grid grid-cols-4 items-center z-40 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] h-[68px]">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-[#111C24] border-t border-gray-100 dark:border-slate-800 px-2 grid grid-cols-5 items-center z-40 shadow-[0_-4px_16px_rgba(0,0,0,0.05)] h-[68px]">
         {TABS.slice(0, 2).map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
