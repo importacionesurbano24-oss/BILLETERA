@@ -68,6 +68,7 @@ interface Transaction {
   amount: number;
   category: 'comida' | 'transporte' | 'compras' | 'servicios' | 'entretenimiento' | 'otros';
   day: number;
+  month?: string;
 }
 
 // Monthly recurring fixed expense template structure
@@ -78,6 +79,7 @@ interface RecurringExpense {
   category: 'comida' | 'transporte' | 'compras' | 'servicios' | 'entretenimiento' | 'otros';
   dayOfMonth: number;
   isPaid: boolean;
+  paidMonths?: string[];
 }
 
 // Category Configuration with Premium Color Palettes matching the visual reference
@@ -216,6 +218,7 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>([]);
   const [budget, setBudget] = useState<number>(INITIAL_BUDGET);
+  const [budgets, setBudgets] = useState<Record<string, number>>({});
   const [dbLoading, setDbLoading] = useState(true);
 
   // States for recurring monthly expenses
@@ -253,8 +256,17 @@ export default function App() {
   const [tempBudgetInput, setTempBudgetInput] = useState('');
 
   // Month selector simulation
-  const [selectedMonth, setSelectedMonth] = useState('Julio 2026');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    return localStorage.getItem('tb_selected_month') || 'Julio 2026';
+  });
   const [showMonthSelect, setShowMonthSelect] = useState(false);
+
+  const activeBudget = budgets[selectedMonth] ?? budget ?? INITIAL_BUDGET;
+
+  const handleSelectMonth = (m: string) => {
+    setSelectedMonth(m);
+    localStorage.setItem('tb_selected_month', m);
+  };
 
   // Quick 30-Second Challenge Timer states
   const [challengeState, setChallengeState] = useState<'idle' | 'running' | 'completed'>('idle');
@@ -300,6 +312,9 @@ export default function App() {
     const unsubWallet = onSnapshot(walletRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        if (data.budgets) {
+          setBudgets(data.budgets);
+        }
         if (typeof data.budget === 'number') {
           setBudget(data.budget);
           setNeedBudgetSetup(false);
@@ -309,6 +324,7 @@ export default function App() {
         // Set state to prompt user for budget setup
         setNeedBudgetSetup(true);
         setBudget(0);
+        setBudgets({});
         setTransactions([]);
         setDbLoading(false);
       }
@@ -328,7 +344,8 @@ export default function App() {
           description: data.description || '',
           amount: Number(data.amount) || 0,
           category: data.category || 'comida',
-          day: Number(data.day) || 20
+          day: Number(data.day) || 20,
+          month: data.month || 'Julio 2026'
         });
       });
       
@@ -351,13 +368,15 @@ export default function App() {
       const recs: RecurringExpense[] = [];
       querySnapshot.forEach((docSnap) => {
         const data = docSnap.data();
+        const paidMonths = Array.isArray(data.paidMonths) ? data.paidMonths : [];
         recs.push({
           id: docSnap.id,
           description: data.description || '',
           amount: Number(data.amount) || 0,
           category: data.category || 'servicios',
           dayOfMonth: Number(data.dayOfMonth) || 5,
-          isPaid: !!data.isPaid
+          isPaid: !!data.isPaid,
+          paidMonths
         });
       });
       recs.sort((a, b) => a.dayOfMonth - b.dayOfMonth);
@@ -421,15 +440,18 @@ export default function App() {
     }, 3500);
   };
 
+  // Filter transactions by selectedMonth
+  const monthlyTransactions = transactions.filter(tx => (tx.month || 'Julio 2026') === selectedMonth);
+
   // Basic stats derived from transaction records
-  const totalSpent = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-  const availableAmount = budget - totalSpent;
-  const spentPercentage = budget > 0 ? Math.round((totalSpent / budget) * 100) : 0;
+  const totalSpent = monthlyTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+  const availableAmount = activeBudget - totalSpent;
+  const spentPercentage = activeBudget > 0 ? Math.round((totalSpent / activeBudget) * 100) : 0;
   const availablePercentage = Math.max(0, 100 - spentPercentage);
 
   // Interactive daily aggregation
   const dailySpentMap = Array.from({ length: 32 }, () => 0);
-  transactions.forEach((tx) => {
+  monthlyTransactions.forEach((tx) => {
     if (tx.day >= 1 && tx.day <= 31) {
       dailySpentMap[tx.day] += tx.amount;
     }
@@ -445,10 +467,10 @@ export default function App() {
   };
 
   // Transaction selection helper
-  const selectedTransaction = transactions.find(t => t.id === selectedTransactionId) || null;
+  const selectedTransaction = monthlyTransactions.find(t => t.id === selectedTransactionId) || null;
 
   // Search filter for history
-  const sortedTransactionsChronologically = [...transactions].sort((a, b) => b.day - a.day);
+  const sortedTransactionsChronologically = [...monthlyTransactions].sort((a, b) => b.day - a.day);
   const filteredTransactions = sortedTransactionsChronologically.filter((tx) => {
     const matchesSearch = tx.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === 'todos' || tx.category === categoryFilter;
@@ -500,6 +522,7 @@ export default function App() {
           amount: cleanAmount,
           category: txCategory,
           day: Math.min(31, Math.max(1, txDay)),
+          month: selectedMonth,
           createdAt: new Date().toISOString()
         });
 
@@ -727,6 +750,7 @@ export default function App() {
       setDbLoading(true);
       await setDoc(doc(db, 'wallets', walletId), {
         budget: parsed,
+        budgets: { [selectedMonth]: parsed },
         createdAt: new Date().toISOString()
       });
       setNeedBudgetSetup(false);
@@ -744,7 +768,10 @@ export default function App() {
     const parsed = parseInt(budgetInput.replace(/\D/g, ''), 10);
     if (!isNaN(parsed) && parsed >= 0) {
       try {
-        await setDoc(doc(db, 'wallets', walletId), { budget: parsed }, { merge: true });
+        await setDoc(doc(db, 'wallets', walletId), {
+          budget: parsed,
+          budgets: { ...budgets, [selectedMonth]: parsed }
+        }, { merge: true });
         setShowBudgetModal(false);
         triggerNotification('Presupuesto mensual actualizado', 'info');
       } catch (err) {
@@ -755,7 +782,10 @@ export default function App() {
 
   const updateBudgetInline = async (newBudget: number) => {
     try {
-      await setDoc(doc(db, 'wallets', walletId), { budget: newBudget }, { merge: true });
+      await setDoc(doc(db, 'wallets', walletId), {
+        budget: newBudget,
+        budgets: { ...budgets, [selectedMonth]: newBudget }
+      }, { merge: true });
     } catch (err) {
       console.error("Error updating budget inline:", err);
     }
@@ -931,8 +961,18 @@ export default function App() {
   // --- RECURRING MONTHLY EXPENSES HANDLERS ---
   const handleToggleRecurringPaid = async (recId: string, currentStatus: boolean) => {
     try {
+      const rec = recurringExpenses.find(r => r.id === recId);
+      if (!rec) return;
+      const currentMonths = rec.paidMonths || [];
+      let newMonths: string[];
+      if (currentStatus) {
+        newMonths = currentMonths.filter(m => m !== selectedMonth);
+      } else {
+        newMonths = currentMonths.includes(selectedMonth) ? currentMonths : [...currentMonths, selectedMonth];
+      }
       await updateDoc(doc(db, 'recurring_expenses', recId), {
-        isPaid: !currentStatus
+        paidMonths: newMonths,
+        isPaid: newMonths.includes('Julio 2026')
       });
       triggerNotification(!currentStatus ? 'Gasto marcado como Pagado' : 'Gasto marcado como Pendiente', 'success');
     } catch (error) {
@@ -945,7 +985,6 @@ export default function App() {
     try {
       setDbLoading(true);
       // 1. Create active transaction matching the recurring expense description, amount, and category.
-      // Use day 20 as today's simulated day, or today's actual day.
       const today = new Date().getDate();
       const simDay = today > 31 ? 20 : today; // Default to realistic current day
       await addDoc(collection(db, 'transactions'), {
@@ -954,12 +993,16 @@ export default function App() {
         amount: rec.amount,
         category: rec.category,
         day: simDay,
+        month: selectedMonth,
         createdAt: new Date().toISOString()
       });
       
       // 2. Mark the template as paid/registered
+      const currentMonths = rec.paidMonths || [];
+      const newMonths = currentMonths.includes(selectedMonth) ? currentMonths : [...currentMonths, selectedMonth];
       await updateDoc(doc(db, 'recurring_expenses', rec.id), {
-        isPaid: true
+        paidMonths: newMonths,
+        isPaid: newMonths.includes('Julio 2026')
       });
       
       triggerNotification(`¡"${rec.description}" registrado en movimientos!`, 'success');
@@ -1287,7 +1330,7 @@ export default function App() {
             {/* Settings Button */}
             <button
               onClick={() => {
-                setBudgetInput(budget.toString());
+                setBudgetInput(activeBudget.toString());
                 setShowBudgetModal(true);
               }}
               className="p-1.5 text-gray-400 hover:text-[#156045] dark:text-gray-500 dark:hover:text-emerald-400 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
@@ -1468,7 +1511,7 @@ export default function App() {
                       {/* Internal Phone Settings Button */}
                       <button
                         onClick={() => {
-                          setBudgetInput(budget.toString());
+                          setBudgetInput(activeBudget.toString());
                           setShowBudgetModal(true);
                         }}
                         className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700/60 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors shadow-sm cursor-pointer"
@@ -1491,7 +1534,7 @@ export default function App() {
                             {['Julio 2026', 'Agosto 2026'].map((m) => (
                               <button
                                 key={m}
-                                onClick={() => { setSelectedMonth(m); setShowMonthSelect(false); }}
+                                onClick={() => { handleSelectMonth(m); setShowMonthSelect(false); }}
                                 className="w-full text-left px-3.5 py-2 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700 block transition-colors"
                               >
                                 {m}
@@ -1514,7 +1557,7 @@ export default function App() {
                         <span className="text-[10px] font-extrabold text-[#527769] dark:text-[#8CB4A5] uppercase tracking-wider">Te queda disponible</span>
                         <button 
                           onClick={() => { 
-                            setBudgetInput(budget.toString());
+                            setBudgetInput(activeBudget.toString());
                             setShowBudgetModal(true);
                           }}
                           className="p-1 transition-colors rounded-md text-gray-400 dark:text-gray-500 hover:text-[#156045] dark:hover:text-emerald-400 cursor-pointer"
@@ -1535,13 +1578,13 @@ export default function App() {
                         de{' '}
                         <span 
                           onClick={() => {
-                            setBudgetInput(budget.toString());
+                            setBudgetInput(activeBudget.toString());
                             setShowBudgetModal(true);
                           }}
                           className="font-bold text-gray-900 dark:text-white hover:underline cursor-pointer"
                           title="Haz clic para editar"
                         >
-                          $ {formatCurrency(budget)}
+                          $ {formatCurrency(activeBudget)}
                         </span>{' '}
                         presupuestado este mes
                       </p>
@@ -1581,7 +1624,7 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <div 
                         onClick={() => {
-                          setBudgetInput(budget.toString());
+                          setBudgetInput(activeBudget.toString());
                           setShowBudgetModal(true);
                         }}
                         className="bg-white dark:bg-slate-800/80 hover:bg-gray-50 dark:hover:bg-slate-700/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm cursor-pointer transition-colors"
@@ -1590,7 +1633,7 @@ export default function App() {
                           Presupuesto
                           <Edit3 className="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" />
                         </span>
-                        <p className="text-sm font-black text-gray-900 dark:text-white mt-0.5">$ {formatCurrency(budget)}</p>
+                        <p className="text-sm font-black text-gray-900 dark:text-white mt-0.5">$ {formatCurrency(activeBudget)}</p>
                       </div>
                       <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm transition-colors">
                         <span className="text-[9px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-wider block">Gastado</span>
@@ -1817,7 +1860,7 @@ export default function App() {
                     {['Julio 2026', 'Agosto 2026'].map((m) => (
                       <button
                         key={m}
-                        onClick={() => { setSelectedMonth(m); setShowMonthSelect(false); }}
+                        onClick={() => { handleSelectMonth(m); setShowMonthSelect(false); }}
                         className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700 block transition-colors cursor-pointer"
                       >
                         {m}
@@ -1843,7 +1886,7 @@ export default function App() {
                       <span className="text-xs font-extrabold text-[#527769] dark:text-[#8CB4A5] uppercase tracking-wider">Te queda disponible</span>
                       <button 
                         onClick={() => { 
-                          setBudgetInput(budget.toString());
+                          setBudgetInput(activeBudget.toString());
                           setShowBudgetModal(true);
                         }}
                         className="p-1.5 transition-colors rounded-lg text-gray-400 dark:text-gray-500 hover:text-[#156045] dark:hover:text-emerald-400 cursor-pointer"
@@ -1864,13 +1907,13 @@ export default function App() {
                       de{' '}
                       <span 
                         onClick={() => {
-                          setBudgetInput(budget.toString());
+                          setBudgetInput(activeBudget.toString());
                           setShowBudgetModal(true);
                         }}
                         className="font-bold text-gray-900 dark:text-white hover:underline cursor-pointer"
                         title="Haz clic para editar"
                       >
-                        $ {formatCurrency(budget)}
+                        $ {formatCurrency(activeBudget)}
                       </span>{' '}
                       presupuestado este mes
                     </p>
@@ -1907,7 +1950,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     <div 
                       onClick={() => {
-                        setBudgetInput(budget.toString());
+                        setBudgetInput(activeBudget.toString());
                         setShowBudgetModal(true);
                       }}
                       className="bg-white dark:bg-slate-800/80 hover:bg-gray-50 dark:hover:bg-slate-700/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-4.5 shadow-sm cursor-pointer transition-colors"
@@ -1916,7 +1959,7 @@ export default function App() {
                         Presupuesto mensual
                         <Edit3 className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
                       </span>
-                      <p className="text-lg font-black text-gray-900 dark:text-white mt-1">$ {formatCurrency(budget)}</p>
+                      <p className="text-lg font-black text-gray-900 dark:text-white mt-1">$ {formatCurrency(activeBudget)}</p>
                     </div>
                     <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700 rounded-2xl p-4.5 shadow-sm transition-colors">
                       <span className="text-[10px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-wider block">Total gastado</span>
@@ -2919,13 +2962,13 @@ export default function App() {
                 <span className="text-gray-400 dark:text-gray-500 font-bold">Fecha de Registro</span>
                 <span className="font-extrabold text-gray-800 dark:text-gray-200 flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
-                  Día {selectedTransaction.day} de Julio, 2026
+                  Día {selectedTransaction.day} de {selectedTransaction.month || 'Julio 2026'}
                 </span>
               </div>
               <div className="flex justify-between items-center py-1 border-b border-gray-50 dark:border-slate-750">
                 <span className="text-gray-400 dark:text-gray-500 font-bold">Porcentaje Presupuestal</span>
                 <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                  {budget > 0 ? ((selectedTransaction.amount / budget) * 100).toFixed(1) : 0}% del total
+                  {activeBudget > 0 ? ((selectedTransaction.amount / activeBudget) * 100).toFixed(1) : 0}% del total
                 </span>
               </div>
               <div className="flex justify-between items-center py-1">
@@ -2979,10 +3022,21 @@ export default function App() {
    */
   function RenderRecurringExpensesWidget() {
     const totalCount = recurringExpenses.length;
-    const paidCount = recurringExpenses.filter(r => r.isPaid).length;
+    
+    // Check if recurring expense is paid in the currently selected month
+    const getIsPaid = (rec: RecurringExpense) => {
+      return rec.paidMonths?.includes(selectedMonth) || false;
+    };
+
+    const paidCount = recurringExpenses.filter(r => getIsPaid(r)).length;
     const totalAmount = recurringExpenses.reduce((sum, r) => sum + r.amount, 0);
-    const paidAmount = recurringExpenses.filter(r => r.isPaid).reduce((sum, r) => sum + r.amount, 0);
+    const paidAmount = recurringExpenses.filter(r => getIsPaid(r)).reduce((sum, r) => sum + r.amount, 0);
+    const pendingAmount = totalAmount - paidAmount; // This is the expense that reduces as you pay!
     const progressPercent = totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0;
+
+    // "suma lo que me llega mensual y lo que toca pagar para que muestre lo que me deberia quedar en mis ingresos"
+    const incomeThisMonth = activeBudget; // lo que llega mensual
+    const whatShouldBeLeft = incomeThisMonth - totalAmount; // lo que debería quedar en mis ingresos
 
     return (
       <div className="bg-white dark:bg-slate-800/80 border border-gray-200/60 dark:border-slate-700/60 p-5 rounded-[22px] shadow-sm space-y-4 transition-colors">
@@ -2990,7 +3044,7 @@ export default function App() {
         <div className="flex justify-between items-center">
           <div>
             <span className="text-[9px] font-black text-[#156045] dark:text-emerald-400 uppercase tracking-widest block">Control Mensual</span>
-            <h3 className="text-sm font-black text-gray-900 dark:text-white">Gastos Fijos / Mensuales</h3>
+            <h3 className="text-sm font-black text-gray-900 dark:text-white">Gastos Fijos ({selectedMonth})</h3>
           </div>
           <button
             onClick={() => setShowRecurringModal(true)}
@@ -3016,6 +3070,40 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-4">
+            
+            {/* INGRESO vs GASTO FIJO SUMMARY BOX ("lo que debería quedar") */}
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-850/40 border border-gray-100 dark:border-slate-700/40 rounded-xl space-y-2.5">
+              <span className="text-[9px] font-black text-gray-450 dark:text-gray-500 uppercase tracking-wider block leading-none">Resumen Financiero Proyectado</span>
+              
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="space-y-0.5">
+                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Ingreso Mensual</span>
+                  <p className="text-xs font-black text-gray-900 dark:text-white">${formatCurrency(incomeThisMonth)}</p>
+                </div>
+                <div className="space-y-0.5 border-x border-gray-200/60 dark:border-slate-700/60">
+                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Gastos Fijos</span>
+                  <p className="text-xs font-black text-red-600 dark:text-red-400">-${formatCurrency(totalAmount)}</p>
+                </div>
+                <div className="space-y-0.5">
+                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Debería Quedar</span>
+                  <p className={`text-xs font-black ${whatShouldBeLeft >= 0 ? 'text-[#156045] dark:text-emerald-400' : 'text-rose-600'}`}>
+                    ${formatCurrency(whatShouldBeLeft)}
+                  </p>
+                </div>
+              </div>
+              
+              {/* "adicional cada vez que page valla reduciendo el gasto" */}
+              <div className="pt-2 border-t border-gray-100 dark:border-slate-750 flex justify-between items-center text-[10px]">
+                <span className="text-gray-500 dark:text-gray-400 font-semibold flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+                  Gasto Fijo Pendiente:
+                </span>
+                <span className="font-black text-orange-600 dark:text-orange-400">
+                  ${formatCurrency(pendingAmount)}
+                </span>
+              </div>
+            </div>
+
             {/* Progress Bar / Stats */}
             <div className="space-y-1.5">
               <div className="flex justify-between items-baseline text-left">
@@ -3035,37 +3123,38 @@ export default function App() {
             </div>
 
             {/* List of items */}
-            <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1 hide-scrollbar">
+            <div className="space-y-2 max-h-[190px] overflow-y-auto pr-1 hide-scrollbar">
               {recurringExpenses.map((rec) => {
                 const catConfig = CATEGORIES[rec.category];
                 const Icon = catConfig.icon;
+                const isPaid = getIsPaid(rec);
                 return (
                   <div 
                     key={rec.id}
-                    className="flex items-center justify-between p-2.5 bg-gray-50/75 dark:bg-slate-850/40 border border-gray-100 dark:border-slate-800 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-all duration-150"
+                    className="flex items-center justify-between p-2 bg-gray-50/75 dark:bg-slate-850/40 border border-gray-100 dark:border-slate-800 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-all duration-150"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <div className={`w-8 h-8 rounded-lg ${catConfig.bgColor} ${catConfig.textColor} flex items-center justify-center shrink-0`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="text-left min-w-0">
                         <p className="text-xs font-bold text-gray-900 dark:text-white truncate leading-snug">{rec.description}</p>
-                        <p className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold">
+                        <p className="text-[9px] text-gray-400 dark:text-gray-500 font-semibold">
                           Día {rec.dayOfMonth} de cada mes
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-xs font-black text-gray-900 dark:text-gray-100">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-black text-gray-900 dark:text-gray-100 mr-0.5">
                         ${formatCurrency(rec.amount)}
                       </span>
 
                       {/* Payment Toggle Action */}
-                      {rec.isPaid ? (
+                      {isPaid ? (
                         <button
                           onClick={() => handleToggleRecurringPaid(rec.id, true)}
-                          className="px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition-colors cursor-pointer"
+                          className="px-2 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition-colors cursor-pointer"
                           title="Click para marcar como pendiente"
                         >
                           ✓ Pagado
@@ -3073,7 +3162,7 @@ export default function App() {
                       ) : (
                         <button
                           onClick={() => handleRegisterRecurringTransaction(rec)}
-                          className="px-3 py-1 bg-[#156045] hover:bg-[#114b36] text-white text-[10px] font-black rounded-lg transition-colors shadow-sm cursor-pointer"
+                          className="px-2.5 py-0.5 bg-[#156045] hover:bg-[#114b36] text-white text-[10px] font-black rounded-lg transition-colors shadow-sm cursor-pointer"
                           title="Registrar este gasto en tus movimientos de hoy"
                         >
                           Pagar

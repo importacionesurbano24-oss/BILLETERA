@@ -9,6 +9,10 @@
           "type": "integer",
           "description": "Monthly budget in local currency"
         },
+        "budgets": {
+          "type": "object",
+          "description": "Income budgets mapped by month"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -42,6 +46,10 @@
         "day": {
           "type": "integer",
           "description": "Day of the month"
+        },
+        "month": {
+          "type": "string",
+          "description": "Selected month of the transaction"
         },
         "createdAt": {
           "type": "string",
@@ -80,6 +88,13 @@
         "isPaid": {
           "type": "boolean",
           "description": "Paid status for the current month"
+        },
+        "paidMonths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of months where this fixed expense was paid"
         },
         "createdAt": {
           "type": "string",
