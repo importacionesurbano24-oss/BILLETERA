@@ -13,5 +13,10 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.walletId == request.auth.uid;
       allow read, update, delete: if request.auth != null && resource.data.walletId == request.auth.uid;
     }
+
+    match /recurring_expenses/{expenseId} {
+      allow create: if request.auth != null && request.resource.data.walletId == request.auth.uid;
+      allow read, update, delete: if request.auth != null && resource.data.walletId == request.auth.uid;
+    }
   }
 }

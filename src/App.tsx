@@ -70,6 +70,16 @@ interface Transaction {
   day: number;
 }
 
+// Monthly recurring fixed expense template structure
+interface RecurringExpense {
+  id: string;
+  description: string;
+  amount: number;
+  category: 'comida' | 'transporte' | 'compras' | 'servicios' | 'entretenimiento' | 'otros';
+  dayOfMonth: number;
+  isPaid: boolean;
+}
+
 // Category Configuration with Premium Color Palettes matching the visual reference
 const CATEGORIES = {
   comida: {
@@ -158,6 +168,15 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
   { id: '14', description: 'Desayuno rápido', amount: 35000, category: 'comida', day: 1 }
 ];
 
+// Initial seed data for monthly fixed expenses
+const INITIAL_RECURRING_EXPENSES: Omit<RecurringExpense, 'id'>[] = [
+  { description: 'Arriendo depto', amount: 550000, category: 'servicios', dayOfMonth: 5, isPaid: true },
+  { description: 'Internet Hogar fibra', amount: 85000, category: 'servicios', dayOfMonth: 10, isPaid: true },
+  { description: 'Netflix Premium', amount: 44900, category: 'servicios', dayOfMonth: 15, isPaid: false },
+  { description: 'Suscripción Gimnasio', amount: 95000, category: 'otros', dayOfMonth: 1, isPaid: false },
+  { description: 'Plan Celular Móvil', amount: 35000, category: 'servicios', dayOfMonth: 8, isPaid: true }
+];
+
 const INITIAL_BUDGET = 2000000;
 
 export default function App() {
@@ -195,8 +214,17 @@ export default function App() {
   }, []);
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>([]);
   const [budget, setBudget] = useState<number>(INITIAL_BUDGET);
   const [dbLoading, setDbLoading] = useState(true);
+
+  // States for recurring monthly expenses
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
+  const [recAmount, setRecAmount] = useState('');
+  const [recCategory, setRecCategory] = useState<keyof typeof CATEGORIES>('servicios');
+  const [recDesc, setRecDesc] = useState('');
+  const [recDayOfMonth, setRecDayOfMonth] = useState<number>(5);
+  const [editingRecId, setEditingRecId] = useState<string | null>(null);
 
   // Modal displays (instead of rigid full screen switching)
   const [showNewExpenseModal, setShowNewExpenseModal] = useState(false);
@@ -235,6 +263,7 @@ export default function App() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const unsubWalletRef = useRef<(() => void) | null>(null);
   const unsubTxRef = useRef<(() => void) | null>(null);
+  const unsubRecRef = useRef<(() => void) | null>(null);
   const isDeletingAccountRef = useRef(false);
 
   // Feedback Notification trigger
@@ -313,8 +342,33 @@ export default function App() {
       setDbLoading(false);
     });
 
+    // 3. Subscribe to Recurring Expenses
+    const recQuery = query(
+      collection(db, 'recurring_expenses'),
+      where('walletId', '==', walletId)
+    );
+    const unsubRec = onSnapshot(recQuery, (querySnapshot) => {
+      const recs: RecurringExpense[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        recs.push({
+          id: docSnap.id,
+          description: data.description || '',
+          amount: Number(data.amount) || 0,
+          category: data.category || 'servicios',
+          dayOfMonth: Number(data.dayOfMonth) || 5,
+          isPaid: !!data.isPaid
+        });
+      });
+      recs.sort((a, b) => a.dayOfMonth - b.dayOfMonth);
+      setRecurringExpenses(recs);
+    }, (error) => {
+      console.error("Error fetching recurring expenses:", error);
+    });
+
     unsubWalletRef.current = unsubWallet;
     unsubTxRef.current = unsubTx;
+    unsubRecRef.current = unsubRec;
 
     return () => {
       if (unsubWalletRef.current) {
@@ -324,6 +378,10 @@ export default function App() {
       if (unsubTxRef.current) {
         unsubTxRef.current();
         unsubTxRef.current = null;
+      }
+      if (unsubRecRef.current) {
+        unsubRecRef.current();
+        unsubRecRef.current = null;
       }
     };
   }, [walletId]);
@@ -599,12 +657,22 @@ export default function App() {
         unsubTxRef.current();
         unsubTxRef.current = null;
       }
+      if (unsubRecRef.current) {
+        unsubRecRef.current();
+        unsubRecRef.current = null;
+      }
 
       // 2. Delete all transactions
       const txQuery = query(collection(db, 'transactions'), where('walletId', '==', uid));
       const querySnapshot = await getDocs(txQuery);
       const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
       await Promise.all(deletePromises);
+
+      // Delete all recurring expenses
+      const recQuery = query(collection(db, 'recurring_expenses'), where('walletId', '==', uid));
+      const recSnapshot = await getDocs(recQuery);
+      const deleteRecPromises = recSnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deleteRecPromises);
 
       // 3. Delete wallet document
       await deleteDoc(doc(db, 'wallets', uid));
@@ -706,6 +774,12 @@ export default function App() {
         const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
         await Promise.all(deletePromises);
 
+        // Delete all current recurring expenses for this wallet
+        const recQuery = query(collection(db, 'recurring_expenses'), where('walletId', '==', walletId));
+        const recSnapshot = await getDocs(recQuery);
+        const deleteRecPromises = recSnapshot.docs.map(doc => deleteDoc(doc.ref));
+        await Promise.all(deleteRecPromises);
+
         // Add initial mock transactions to Firestore
         const addPromises = INITIAL_TRANSACTIONS.map(tx => {
           return addDoc(collection(db, 'transactions'), {
@@ -718,6 +792,20 @@ export default function App() {
           });
         });
         await Promise.all(addPromises);
+
+        // Add initial mock recurring expenses to Firestore
+        const addRecPromises = INITIAL_RECURRING_EXPENSES.map(rec => {
+          return addDoc(collection(db, 'recurring_expenses'), {
+            walletId,
+            description: rec.description,
+            amount: rec.amount,
+            category: rec.category,
+            dayOfMonth: rec.dayOfMonth,
+            isPaid: rec.isPaid,
+            createdAt: new Date().toISOString()
+          });
+        });
+        await Promise.all(addRecPromises);
 
         setSearchQuery('');
         setCategoryFilter('todos');
@@ -750,6 +838,12 @@ export default function App() {
         const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
         await Promise.all(deletePromises);
 
+        // Delete all current recurring expenses for this wallet
+        const recQuery = query(collection(db, 'recurring_expenses'), where('walletId', '==', walletId));
+        const recSnapshot = await getDocs(recQuery);
+        const deleteRecPromises = recSnapshot.docs.map(doc => deleteDoc(doc.ref));
+        await Promise.all(deleteRecPromises);
+
         setSearchQuery('');
         setCategoryFilter('todos');
         setChallengeState('idle');
@@ -781,6 +875,12 @@ export default function App() {
         const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
         await Promise.all(deletePromises);
 
+        // Delete all current recurring expenses
+        const recQuery = query(collection(db, 'recurring_expenses'), where('walletId', '==', walletId));
+        const recSnapshot = await getDocs(recQuery);
+        const deleteRecPromises = recSnapshot.docs.map(doc => deleteDoc(doc.ref));
+        await Promise.all(deleteRecPromises);
+
         // Add initial mock transactions
         const addPromises = INITIAL_TRANSACTIONS.map(tx => {
           return addDoc(collection(db, 'transactions'), {
@@ -793,6 +893,20 @@ export default function App() {
           });
         });
         await Promise.all(addPromises);
+
+        // Add initial mock recurring expenses
+        const addRecPromises = INITIAL_RECURRING_EXPENSES.map(rec => {
+          return addDoc(collection(db, 'recurring_expenses'), {
+            walletId,
+            description: rec.description,
+            amount: rec.amount,
+            category: rec.category,
+            dayOfMonth: rec.dayOfMonth,
+            isPaid: rec.isPaid,
+            createdAt: new Date().toISOString()
+          });
+        });
+        await Promise.all(addRecPromises);
 
         setElapsedTime(0);
         setChallengeSuccess(null);
@@ -808,6 +922,152 @@ export default function App() {
         triggerNotification('⏱️ ¡Tiempo corriendo! Registra un gasto rápido.', 'info');
       } catch (err) {
         console.error("Error launching speedrun:", err);
+      } finally {
+        setDbLoading(false);
+      }
+    }
+  };
+
+  // --- RECURRING MONTHLY EXPENSES HANDLERS ---
+  const handleToggleRecurringPaid = async (recId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'recurring_expenses', recId), {
+        isPaid: !currentStatus
+      });
+      triggerNotification(!currentStatus ? 'Gasto marcado como Pagado' : 'Gasto marcado como Pendiente', 'success');
+    } catch (error) {
+      console.error("Error toggling paid status:", error);
+      triggerNotification('Error al cambiar el estado del pago', 'delete');
+    }
+  };
+
+  const handleRegisterRecurringTransaction = async (rec: RecurringExpense) => {
+    try {
+      setDbLoading(true);
+      // 1. Create active transaction matching the recurring expense description, amount, and category.
+      // Use day 20 as today's simulated day, or today's actual day.
+      const today = new Date().getDate();
+      const simDay = today > 31 ? 20 : today; // Default to realistic current day
+      await addDoc(collection(db, 'transactions'), {
+        walletId,
+        description: `${rec.description} (Mensual)`,
+        amount: rec.amount,
+        category: rec.category,
+        day: simDay,
+        createdAt: new Date().toISOString()
+      });
+      
+      // 2. Mark the template as paid/registered
+      await updateDoc(doc(db, 'recurring_expenses', rec.id), {
+        isPaid: true
+      });
+      
+      triggerNotification(`¡"${rec.description}" registrado en movimientos!`, 'success');
+    } catch (error) {
+      console.error("Error registering recurring expense transaction:", error);
+      triggerNotification('Error al registrar el gasto', 'delete');
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const handleSaveRecurringExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recDesc.trim() || !recAmount) {
+      alert('Por favor completa todos los campos.');
+      return;
+    }
+    const parsedAmount = parseInt(recAmount.replace(/\D/g, ''), 10);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      alert('Por favor ingresa un monto válido mayor a 0.');
+      return;
+    }
+
+    try {
+      setDbLoading(true);
+      if (editingRecId) {
+        await updateDoc(doc(db, 'recurring_expenses', editingRecId), {
+          description: recDesc.trim(),
+          amount: parsedAmount,
+          category: recCategory,
+          dayOfMonth: Number(recDayOfMonth) || 5
+        });
+        triggerNotification(`Gasto fijo "${recDesc}" actualizado`, 'success');
+      } else {
+        await addDoc(collection(db, 'recurring_expenses'), {
+          walletId,
+          description: recDesc.trim(),
+          amount: parsedAmount,
+          category: recCategory,
+          dayOfMonth: Number(recDayOfMonth) || 5,
+          isPaid: false,
+          createdAt: new Date().toISOString()
+        });
+        triggerNotification(`Gasto fijo "${recDesc}" creado`, 'success');
+      }
+      
+      // Reset input states
+      setRecAmount('');
+      setRecDesc('');
+      setRecCategory('servicios');
+      setRecDayOfMonth(5);
+      setEditingRecId(null);
+    } catch (error) {
+      console.error("Error saving recurring expense:", error);
+      triggerNotification('Error al guardar el gasto fijo', 'delete');
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const handleDeleteRecurringExpense = async (id: string, desc: string) => {
+    if (confirm(`¿Eliminar el gasto fijo "${desc}"?`)) {
+      try {
+        setDbLoading(true);
+        await deleteDoc(doc(db, 'recurring_expenses', id));
+        triggerNotification(`Gasto fijo "${desc}" eliminado`, 'delete');
+        if (editingRecId === id) {
+          setEditingRecId(null);
+          setRecDesc('');
+          setRecAmount('');
+        }
+      } catch (error) {
+        console.error("Error deleting recurring expense:", error);
+      } finally {
+        setDbLoading(false);
+      }
+    }
+  };
+
+  const handleStartEditRecurring = (rec: RecurringExpense) => {
+    setEditingRecId(rec.id);
+    setRecDesc(rec.description);
+    setRecAmount(rec.amount.toString());
+    setRecCategory(rec.category);
+    setRecDayOfMonth(rec.dayOfMonth);
+  };
+
+  const handleCancelEditRecurring = () => {
+    setEditingRecId(null);
+    setRecDesc('');
+    setRecAmount('');
+    setRecCategory('servicios');
+    setRecDayOfMonth(5);
+  };
+
+  const handleResetRecurringPaidStatus = async () => {
+    if (confirm('¿Quieres restablecer el estado de pago de todos los gastos fijos a "Pendiente"? Esto sirve para comenzar un nuevo mes.')) {
+      try {
+        setDbLoading(true);
+        const promises = recurringExpenses.map(rec => {
+          return updateDoc(doc(db, 'recurring_expenses', rec.id), {
+            isPaid: false
+          });
+        });
+        await Promise.all(promises);
+        triggerNotification('Gastos fijos restablecidos a pendientes', 'info');
+      } catch (error) {
+        console.error("Error resetting paid statuses:", error);
       } finally {
         setDbLoading(false);
       }
@@ -1418,6 +1678,9 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Interactive Fixed/Monthly Expenses Card */}
+                    {RenderRecurringExpensesWidget()}
+
                     {/* 3. Last Movements Preview */}
                     <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700/60 rounded-[22px] p-4 shadow-sm transition-colors">
                       <div className="flex justify-between items-center mb-3">
@@ -1772,6 +2035,9 @@ export default function App() {
                     </button>
                   </div>
 
+                  {/* Interactive Fixed/Monthly Expenses Card */}
+                  {RenderRecurringExpensesWidget()}
+
                   {/* Last Movements Box */}
                   <div className="bg-white dark:bg-slate-800/80 border border-gray-100 dark:border-slate-700/60 rounded-[22px] p-5 shadow-sm flex flex-col justify-between h-[280px] transition-colors">
                     <div>
@@ -2005,6 +2271,7 @@ export default function App() {
           {RenderExpenseFormModal()}
           {RenderHistoryModal()}
           {RenderDetailModal()}
+          {RenderRecurringExpensesModal()}
         </div>
       )}
 
@@ -2022,7 +2289,223 @@ export default function App() {
         {RenderExpenseFormModal()}
         {RenderHistoryModal()}
         {RenderDetailModal()}
+        {RenderRecurringExpensesModal()}
       </>
+    );
+  }
+
+  /**
+   * RENDERS THE RECURRING MONTHLY EXPENSES MANAGEMENT MODAL
+   */
+  function RenderRecurringExpensesModal() {
+    if (!showRecurringModal) return null;
+    const isMobile = viewMode === 'mobile';
+    return (
+      <div className={isMobile 
+        ? "absolute inset-0 bg-black/60 z-50 flex items-end justify-center pt-10" 
+        : "fixed inset-0 bg-black/60 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+      }>
+        <div className={isMobile
+          ? "bg-white dark:bg-[#111C24] w-full rounded-t-[32px] h-[92%] flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-bottom duration-300 relative transition-colors"
+          : "bg-white dark:bg-[#111C24] w-full max-w-lg rounded-3xl h-[80%] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 relative border border-gray-100 dark:border-slate-800 transition-colors"
+        }>
+          {/* Drag bar indicator inside phone */}
+          {isMobile && (
+            <div className="w-full flex justify-center py-2 shrink-0 bg-gray-50/50 dark:bg-slate-800/40">
+              <div className="w-12 h-1 bg-gray-300 dark:bg-slate-700 rounded-full"></div>
+            </div>
+          )}
+
+          {/* Modal Header */}
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-[#111C24] shrink-0 transition-colors">
+            <div className="flex items-center gap-2">
+              <Settings className="w-5 h-5 text-[#156045] dark:text-emerald-400" />
+              <h3 className="text-sm font-black text-gray-900 dark:text-white">
+                Gastos Fijos Mensuales
+              </h3>
+            </div>
+            <button 
+              onClick={() => {
+                handleCancelEditRecurring();
+                setShowRecurringModal(false);
+              }} 
+              className="w-8 h-8 rounded-full bg-gray-50 dark:bg-slate-800 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Content area: Two parts (Form & List) */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 hide-scrollbar space-y-5">
+            {/* Form Part (Add / Edit) */}
+            <form onSubmit={handleSaveRecurringExpense} className="bg-gray-50 dark:bg-slate-800/30 border border-gray-150 dark:border-slate-850 p-4 rounded-2xl space-y-3 text-left">
+              <h4 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">
+                {editingRecId ? '📝 Editar Gasto Fijo' : '➕ Agregar Gasto Fijo'}
+              </h4>
+              
+              <div className="grid grid-cols-2 gap-3">
+                {/* Description */}
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
+                    Concepto / Nombre
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. Netflix, Arriendo, Luz"
+                    value={recDesc}
+                    onChange={(e) => setRecDesc(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+                  />
+                </div>
+
+                {/* Amount */}
+                <div className="col-span-2 md:col-span-1">
+                  <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
+                    Monto ($)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. 45000"
+                    value={recAmount}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setRecAmount(val);
+                    }}
+                    className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+                  />
+                </div>
+
+                {/* Category select */}
+                <div className="col-span-1">
+                  <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
+                    Categoría
+                  </label>
+                  <select
+                    value={recCategory}
+                    onChange={(e) => setRecCategory(e.target.value as keyof typeof CATEGORIES)}
+                    className="w-full px-3 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+                  >
+                    {Object.entries(CATEGORIES).map(([key, value]) => (
+                      <option key={key} value={key}>{value.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Day of Month */}
+                <div className="col-span-1">
+                  <label className="block text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
+                    Día de Cobro (1 - 31)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    required
+                    value={recDayOfMonth}
+                    onChange={(e) => setRecDayOfMonth(Math.max(1, Math.min(31, Number(e.target.value) || 1)))}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-800 dark:text-white focus:outline-none focus:border-[#156045] dark:focus:border-emerald-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                {editingRecId && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEditRecurring}
+                    className="px-3 py-2 rounded-xl text-[10px] font-bold text-gray-500 hover:bg-gray-150 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="bg-[#156045] hover:bg-[#114b36] text-white px-4 py-2 rounded-xl text-[10px] font-black shadow-sm transition-all cursor-pointer"
+                >
+                  {editingRecId ? 'Guardar Cambios' : 'Agregar Gasto'}
+                </button>
+              </div>
+            </form>
+
+            {/* List Part */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <h4 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">
+                  Gastos Registrados ({recurringExpenses.length})
+                </h4>
+                {recurringExpenses.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResetRecurringPaidStatus}
+                    className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-amber-500 hover:underline font-bold cursor-pointer"
+                    title="Restablecer todos los estados de pago a pendientes para empezar un nuevo mes"
+                  >
+                    Reiniciar Mes 🔄
+                  </button>
+                )}
+              </div>
+
+              {recurringExpenses.length === 0 ? (
+                <div className="text-center py-6 border-2 border-dashed border-gray-200 dark:border-slate-800 rounded-2xl">
+                  <p className="text-xs text-gray-400 dark:text-gray-500 font-bold">No tienes gastos fijos mensuales agregados.</p>
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Ingresa uno arriba para comenzar a controlarlos.</p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-[250px] overflow-y-auto pr-1 hide-scrollbar">
+                  {recurringExpenses.map((rec) => {
+                    const catConfig = CATEGORIES[rec.category];
+                    const Icon = catConfig.icon;
+                    return (
+                      <div 
+                        key={rec.id}
+                        className="flex items-center justify-between p-2.5 bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-8 h-8 rounded-lg ${catConfig.bgColor} ${catConfig.textColor} flex items-center justify-center shrink-0`}>
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div className="text-left min-w-0">
+                            <p className="text-xs font-bold text-gray-900 dark:text-white truncate max-w-[150px] leading-snug">{rec.description}</p>
+                            <p className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold">
+                              Día {rec.dayOfMonth} • {catConfig.label}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-black text-gray-900 dark:text-gray-100">
+                            ${formatCurrency(rec.amount)}
+                          </span>
+
+                          {/* Quick Edit/Delete buttons */}
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => handleStartEditRecurring(rec)}
+                              className="p-1 text-gray-400 dark:text-gray-400 hover:text-[#156045] dark:hover:text-emerald-400 transition-colors cursor-pointer"
+                              title="Editar"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteRecurringExpense(rec.id, rec.description)}
+                              className="p-1 text-gray-400 dark:text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -2487,6 +2970,122 @@ export default function App() {
 
           </div>
         </div>
+      </div>
+    );
+  }
+
+  /**
+   * RENDERS THE INTERACTIVE DASHBOARD SECTION FOR MONTHLY FIXED EXPENSES
+   */
+  function RenderRecurringExpensesWidget() {
+    const totalCount = recurringExpenses.length;
+    const paidCount = recurringExpenses.filter(r => r.isPaid).length;
+    const totalAmount = recurringExpenses.reduce((sum, r) => sum + r.amount, 0);
+    const paidAmount = recurringExpenses.filter(r => r.isPaid).reduce((sum, r) => sum + r.amount, 0);
+    const progressPercent = totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0;
+
+    return (
+      <div className="bg-white dark:bg-slate-800/80 border border-gray-200/60 dark:border-slate-700/60 p-5 rounded-[22px] shadow-sm space-y-4 transition-colors">
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <div>
+            <span className="text-[9px] font-black text-[#156045] dark:text-emerald-400 uppercase tracking-widest block">Control Mensual</span>
+            <h3 className="text-sm font-black text-gray-900 dark:text-white">Gastos Fijos / Mensuales</h3>
+          </div>
+          <button
+            onClick={() => setShowRecurringModal(true)}
+            className="px-3 py-1.5 bg-gray-50 dark:bg-slate-700/50 hover:bg-gray-100 dark:hover:bg-slate-700 text-[#156045] dark:text-emerald-400 text-[10px] font-black rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Gestionar
+          </button>
+        </div>
+
+        {totalCount === 0 ? (
+          <div className="text-center py-5 border border-dashed border-gray-200 dark:border-slate-700/80 rounded-xl space-y-2">
+            <p className="text-xs font-semibold text-gray-400 dark:text-gray-500">¿Tienes gastos fijos todos los meses?</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 max-w-[240px] mx-auto leading-normal">
+              Agrega tu arriendo, planes de internet o streaming para registrarlos con 1 solo toque.
+            </p>
+            <button
+              onClick={() => setShowRecurringModal(true)}
+              className="mt-1 bg-[#156045] hover:bg-[#114b36] text-white px-3 py-1.5 rounded-lg text-[9px] font-black transition-all cursor-pointer"
+            >
+              Comenzar a Organizar
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Progress Bar / Stats */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-baseline text-left">
+                <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400">
+                  Progreso de Pagos ({paidCount} de {totalCount})
+                </span>
+                <span className="text-[11px] font-black text-[#156045] dark:text-emerald-400">
+                  ${formatCurrency(paidAmount)} / ${formatCurrency(totalAmount)}
+                </span>
+              </div>
+              <div className="w-full h-2 bg-gray-100 dark:bg-slate-700/50 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full transition-all duration-500"
+                  style={{ width: `${progressPercent}%` }}
+                ></div>
+              </div>
+            </div>
+
+            {/* List of items */}
+            <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1 hide-scrollbar">
+              {recurringExpenses.map((rec) => {
+                const catConfig = CATEGORIES[rec.category];
+                const Icon = catConfig.icon;
+                return (
+                  <div 
+                    key={rec.id}
+                    className="flex items-center justify-between p-2.5 bg-gray-50/75 dark:bg-slate-850/40 border border-gray-100 dark:border-slate-800 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-all duration-150"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-8 h-8 rounded-lg ${catConfig.bgColor} ${catConfig.textColor} flex items-center justify-center shrink-0`}>
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="text-left min-w-0">
+                        <p className="text-xs font-bold text-gray-900 dark:text-white truncate leading-snug">{rec.description}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold">
+                          Día {rec.dayOfMonth} de cada mes
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs font-black text-gray-900 dark:text-gray-100">
+                        ${formatCurrency(rec.amount)}
+                      </span>
+
+                      {/* Payment Toggle Action */}
+                      {rec.isPaid ? (
+                        <button
+                          onClick={() => handleToggleRecurringPaid(rec.id, true)}
+                          className="px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition-colors cursor-pointer"
+                          title="Click para marcar como pendiente"
+                        >
+                          ✓ Pagado
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleRegisterRecurringTransaction(rec)}
+                          className="px-3 py-1 bg-[#156045] hover:bg-[#114b36] text-white text-[10px] font-black rounded-lg transition-colors shadow-sm cursor-pointer"
+                          title="Registrar este gasto en tus movimientos de hoy"
+                        >
+                          Pagar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
