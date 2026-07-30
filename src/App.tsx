@@ -50,6 +50,8 @@ import {
   History,
   Check,
   TrendingUp,
+  TrendingDown,
+  Scale,
   AlertCircle,
   Award,
   Sun,
@@ -1721,6 +1723,9 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Interactive Projected Financial Summary */}
+                    {RenderProjectedSummaryWidget()}
+
                     {/* Interactive Fixed/Monthly Expenses Card */}
                     {RenderRecurringExpensesWidget()}
 
@@ -2077,6 +2082,9 @@ export default function App() {
                       Probar Reto de Velocidad
                     </button>
                   </div>
+
+                  {/* Interactive Projected Financial Summary */}
+                  {RenderProjectedSummaryWidget()}
 
                   {/* Interactive Fixed/Monthly Expenses Card */}
                   {RenderRecurringExpensesWidget()}
@@ -3018,6 +3026,99 @@ export default function App() {
   }
 
   /**
+   * RENDERS THE STANDALONE FINANCIAL PROJECTION CARD (Income, Fixed Expenses, Balance)
+   */
+  function RenderProjectedSummaryWidget() {
+    const totalCount = recurringExpenses.length;
+    if (totalCount === 0) return null;
+
+    const getIsPaid = (rec: RecurringExpense) => {
+      return rec.paidMonths?.includes(selectedMonth) || false;
+    };
+
+    const totalAmount = recurringExpenses.reduce((sum, r) => sum + r.amount, 0);
+    const paidAmount = recurringExpenses.filter(r => getIsPaid(r)).reduce((sum, r) => sum + r.amount, 0);
+    const pendingAmount = totalAmount - paidAmount;
+    const incomeThisMonth = activeBudget;
+    const whatShouldBeLeft = incomeThisMonth - totalAmount;
+
+    return (
+      <div className="bg-white dark:bg-slate-800/80 border border-gray-200/60 dark:border-slate-700/60 p-5 rounded-[22px] shadow-sm space-y-4 transition-colors">
+        {/* Header */}
+        <div>
+          <span className="text-[9px] font-black text-[#156045] dark:text-emerald-400 uppercase tracking-widest block">Proyección Financiera</span>
+          <h3 className="text-sm font-black text-gray-900 dark:text-white">Resumen Proyectado ({selectedMonth})</h3>
+        </div>
+
+        {/* Financial items */}
+        <div className="space-y-3">
+          {/* Ingreso Mensual */}
+          <div className="flex items-center justify-between p-3 bg-gray-50/60 dark:bg-slate-850/30 border border-gray-100/60 dark:border-slate-800/60 rounded-xl">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-gray-900 dark:text-white">Ingreso Mensual</p>
+                <p className="text-[9px] text-gray-450 dark:text-gray-500 font-semibold">Lo que llega mensual</p>
+              </div>
+            </div>
+            <span className="text-sm font-black text-[#156045] dark:text-emerald-400">
+              ${formatCurrency(incomeThisMonth)}
+            </span>
+          </div>
+
+          {/* Gastos Fijos */}
+          <div className="flex items-center justify-between p-3 bg-gray-50/60 dark:bg-slate-850/30 border border-gray-100/60 dark:border-slate-800/60 rounded-xl">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <TrendingDown className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-gray-900 dark:text-white">Gastos Fijos</p>
+                <p className="text-[9px] text-gray-450 dark:text-gray-500 font-semibold">Lo que toca pagar</p>
+              </div>
+            </div>
+            <span className="text-sm font-black text-rose-600 dark:text-rose-400">
+              -${formatCurrency(totalAmount)}
+            </span>
+          </div>
+
+          {/* Debería Quedar */}
+          <div className="flex items-center justify-between p-3 bg-[#EAF2EF] dark:bg-emerald-950/20 border border-emerald-100/40 dark:border-emerald-900/20 rounded-xl">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100/60 dark:bg-emerald-900/40 text-[#156045] dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Scale className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-gray-900 dark:text-white">Debería Quedar</p>
+                <p className="text-[9px] text-gray-450 dark:text-gray-500 font-semibold">Saldo proyectado libre</p>
+              </div>
+            </div>
+            <span className={`text-sm font-black ${whatShouldBeLeft >= 0 ? 'text-[#156045] dark:text-emerald-400' : 'text-rose-600'}`}>
+              ${formatCurrency(whatShouldBeLeft)}
+            </span>
+          </div>
+        </div>
+
+        {/* Dynamic Gasto Pendiente */}
+        <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100/40 dark:border-amber-900/20 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span className="text-[10px] text-gray-600 dark:text-gray-400 font-bold">Gasto Fijo Pendiente:</span>
+          </div>
+          <span className="text-xs font-black text-amber-700 dark:text-amber-400">
+            ${formatCurrency(pendingAmount)}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  /**
    * RENDERS THE INTERACTIVE DASHBOARD SECTION FOR MONTHLY FIXED EXPENSES
    */
   function RenderRecurringExpensesWidget() {
@@ -3070,39 +3171,6 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-4">
-            
-            {/* INGRESO vs GASTO FIJO SUMMARY BOX ("lo que debería quedar") */}
-            <div className="p-3.5 bg-slate-50 dark:bg-slate-850/40 border border-gray-100 dark:border-slate-700/40 rounded-xl space-y-2.5">
-              <span className="text-[9px] font-black text-gray-450 dark:text-gray-500 uppercase tracking-wider block leading-none">Resumen Financiero Proyectado</span>
-              
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Ingreso Mensual</span>
-                  <p className="text-xs font-black text-gray-900 dark:text-white">${formatCurrency(incomeThisMonth)}</p>
-                </div>
-                <div className="space-y-0.5 border-x border-gray-200/60 dark:border-slate-700/60">
-                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Gastos Fijos</span>
-                  <p className="text-xs font-black text-red-600 dark:text-red-400">-${formatCurrency(totalAmount)}</p>
-                </div>
-                <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">Debería Quedar</span>
-                  <p className={`text-xs font-black ${whatShouldBeLeft >= 0 ? 'text-[#156045] dark:text-emerald-400' : 'text-rose-600'}`}>
-                    ${formatCurrency(whatShouldBeLeft)}
-                  </p>
-                </div>
-              </div>
-              
-              {/* "adicional cada vez que page valla reduciendo el gasto" */}
-              <div className="pt-2 border-t border-gray-100 dark:border-slate-750 flex justify-between items-center text-[10px]">
-                <span className="text-gray-500 dark:text-gray-400 font-semibold flex items-center gap-1">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                  Gasto Fijo Pendiente:
-                </span>
-                <span className="font-black text-orange-600 dark:text-orange-400">
-                  ${formatCurrency(pendingAmount)}
-                </span>
-              </div>
-            </div>
 
             {/* Progress Bar / Stats */}
             <div className="space-y-1.5">
