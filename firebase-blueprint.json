@@ -9,6 +9,10 @@
           "type": "integer",
           "description": "Monthly budget in local currency"
         },
+        "budgets": {
+          "type": "object",
+          "description": "Income budgets mapped by month"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -43,6 +47,10 @@
           "type": "integer",
           "description": "Day of the month"
         },
+        "month": {
+          "type": "string",
+          "description": "Selected month of the transaction"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -50,6 +58,51 @@
         }
       },
       "required": ["walletId", "description", "amount", "category", "day", "createdAt"]
+    },
+    "RecurringExpense": {
+      "title": "RecurringExpense",
+      "description": "Monthly recurring fixed expense template",
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "description": {
+          "type": "string",
+          "description": "Name or concept of the monthly expense"
+        },
+        "amount": {
+          "type": "integer",
+          "description": "Cost of the expense"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["comida", "transporte", "compras", "servicios", "entretenimiento", "otros"],
+          "description": "Expense category"
+        },
+        "dayOfMonth": {
+          "type": "integer",
+          "description": "Expected payment day of the month"
+        },
+        "isPaid": {
+          "type": "boolean",
+          "description": "Paid status for the current month"
+        },
+        "paidMonths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of months where this fixed expense was paid"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp"
+        }
+      },
+      "required": ["walletId", "description", "amount", "category", "dayOfMonth", "isPaid", "createdAt"]
     }
   },
   "firestore": {
@@ -60,6 +113,10 @@
     "/transactions/{transactionId}": {
       "schema": "Transaction",
       "description": "Contains all expenses and transactions for users"
+    },
+    "/recurring_expenses/{expenseId}": {
+      "schema": "RecurringExpense",
+      "description": "Contains monthly recurring fixed expenses"
     }
   }
 }
